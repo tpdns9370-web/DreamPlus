@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inertia 17F 오피스 시뮬레이터</title>
+<meta name="description" content="이너시아 · 드림플러스 강남 17층 사무실 배치 시뮬레이터 — 자리 배치, 이름표, 프리셋, 공유 링크">
+<meta property="og:title" content="Inertia 17F 오피스 시뮬레이터">
+<meta property="og:description" content="드림플러스 강남 17층 이너시아 사무실 자리 배치 시뮬레이션">
+<meta property="og:image" content="assets/og-image.png">
+<meta name="theme-color" content="#4B45E8">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body class="mode-view">
+
+<header class="topbar">
+  <div class="brand">
+    <img src="assets/logo.svg" alt="" width="32" height="32">
+    <div class="brand-txt">
+      <b>INERTIA <span class="dot">·</span> 17F</b>
+      <small>드림플러스 강남 오피스 시뮬레이터</small>
+    </div>
+  </div>
+
+  <div class="scn">
+    <button class="btn ghost scn-btn" id="scnBtn" aria-haspopup="menu">
+      <span class="scn-label">시나리오</span><b id="scnName">기본 배치안</b><i data-icon="chevron"></i>
+    </button>
+  </div>
+
+  <div class="seg mode-seg" role="tablist" aria-label="모드">
+    <button role="tab" data-mode="view"><i data-icon="eye"></i><span>보기</span></button>
+    <button role="tab" data-mode="edit"><i data-icon="edit"></i><span>편집</span></button>
+  </div>
+
+  <div class="grow"></div>
+
+  <div class="search" id="globalSearch">
+    <i data-icon="search"></i>
+    <input type="search" id="searchInput" placeholder="이름으로 자리 찾기" autocomplete="off" spellcheck="false">
+    <kbd>/</kbd>
+    <div class="search-pop" id="searchPop" hidden></div>
+  </div>
+
+  <div class="tb-actions">
+    <button class="btn icon edit-only" id="undoBtn" title="실행 취소 (Ctrl+Z)"><i data-icon="undo"></i></button>
+    <button class="btn icon edit-only" id="redoBtn" title="다시 실행 (Ctrl+Shift+Z)"><i data-icon="redo"></i></button>
+    <span class="save-state edit-only" id="saveState" title="이 브라우저에 자동 저장됩니다"><i data-icon="check"></i><span>저장됨</span></span>
+    <button class="btn primary" id="shareBtn"><i data-icon="share"></i><span>공유</span></button>
+    <button class="btn icon" id="moreBtn" title="더보기" aria-haspopup="menu"><i data-icon="more"></i></button>
+  </div>
+</header>
+
+<main class="app">
+  <!-- ============ LEFT PANEL ============ -->
+  <aside class="panel left" id="leftPanel">
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="items" class="edit-only"><i data-icon="box"></i>아이템</button>
+      <button role="tab" data-tab="people"><i data-icon="users"></i>구성원</button>
+      <button role="tab" data-tab="display"><i data-icon="layers"></i>표시</button>
+    </nav>
+
+    <section class="tab-body" data-body="items">
+      <div class="cat-tools">
+        <div class="field-search"><i data-icon="search"></i><input type="search" id="catSearch" placeholder="아이템 검색"></div>
+        <button class="btn soft wide" id="customBtn"><i data-icon="sparkles"></i>사용자 아이템 만들기</button>
+        <label class="check"><input type="checkbox" id="autoChair" checked><span>책상 배치 시 의자 함께 놓기</span></label>
+      </div>
+      <div class="catalog" id="catalog"></div>
+      <p class="hint">카드를 끌어다 놓거나, 클릭 후 도면을 클릭해 배치하세요. 배치 중 <kbd>R</kbd> 회전 · <kbd>Shift</kbd> 연속 배치</p>
+    </section>
+
+    <section class="tab-body" data-body="people">
+      <div class="field-search"><i data-icon="search"></i><input type="search" id="peopleSearch" placeholder="이름 · 팀 검색"></div>
+      <div class="people-summary" id="peopleSummary"></div>
+      <div class="people-list" id="peopleList"></div>
+      <div class="teams-box">
+        <div class="box-head"><b>팀</b><button class="btn tiny soft edit-only" id="addTeamBtn"><i data-icon="plus"></i>팀 추가</button></div>
+        <div id="teamList" class="team-list"></div>
+      </div>
+    </section>
+
+    <section class="tab-body" data-body="display">
+      <div class="opt-group">
+        <h4>도면 표시</h4>
+        <label class="switch"><input type="checkbox" data-pref="labels"><span></span>이름표</label>
+        <label class="switch"><input type="checkbox" data-pref="roomLabels"><span></span>공간 이름</label>
+        <label class="switch"><input type="checkbox" data-pref="dims"><span></span>공간 치수</label>
+        <label class="switch"><input type="checkbox" data-pref="removed"><span></span>벽제거 위치 (빨간 점선)</label>
+        <label class="switch"><input type="checkbox" data-pref="grid"><span></span>그리드 (50cm)</label>
+        <label class="switch"><input type="checkbox" data-pref="context"><span></span>주변 공간 (회의실·라운지)</label>
+      </div>
+      <div class="opt-group edit-only">
+        <h4>편집 도우미</h4>
+        <label class="switch"><input type="checkbox" data-pref="snap"><span></span>그리드 스냅</label>
+        <label class="row-field">스냅 간격
+          <select data-pref="gridSize"><option value="1">1 cm</option><option value="5">5 cm</option><option value="10">10 cm</option><option value="25">25 cm</option></select>
+        </label>
+        <label class="switch"><input type="checkbox" data-pref="guides"><span></span>스마트 정렬 가이드</label>
+        <label class="switch"><input type="checkbox" data-pref="distances"><span></span>이동 시 거리 표시</label>
+        <label class="switch"><input type="checkbox" data-pref="warnings"><span></span>겹침 · 벽 충돌 경고</label>
+        <p class="hint"><kbd>Alt</kbd> 를 누른 채 끌면 스냅 없이 자유 이동</p>
+      </div>
+      <div class="opt-group">
+        <h4>참고 자료</h4>
+        <button class="btn soft wide" id="origPlanBtn"><i data-icon="map"></i>임대차계약서 평면도 원본</button>
+        <button class="btn soft wide" id="galleryBtn"><i data-icon="image"></i>현장 사진 보기</button>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ============ STAGE ============ -->
+  <section class="stage" id="stage">
+    <svg id="plan" xmlns="http://www.w3.org/2000/svg" aria-label="17층 평면도">
+      <defs>
+        <style id="svgStyle">
+          text { font-family: 'Pretendard Variable', Pretendard, 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
+          .sp-sh { fill: #1b1f24; opacity: .09; }
+          .it { cursor: pointer; }
+          .it.locked { cursor: default; }
+          .it.dim, .lbl.dim { opacity: .28; }
+          .ctx-room { fill: #E4E1DA; stroke: #CFCBC2; stroke-width: 6; }
+          .ctx-txt { fill: #A29D93; font-size: 26px; font-weight: 700; letter-spacing: 1px; text-anchor: middle; dominant-baseline: central; }
+          .note-txt { fill: #B5AFA4; font-size: 24px; font-weight: 700; letter-spacing: 6px; text-anchor: middle; dominant-baseline: central; }
+          .room-floor { cursor: default; }
+          .room-floor.sel { stroke: #4F46E5; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+          .room-hover { fill: none; stroke: #4F46E5; stroke-opacity: .5; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+          .rw-line { stroke: #E5484D; stroke-width: 3.5; stroke-dasharray: 14 9; opacity: .8; }
+          .rw-tag rect { fill: #E5484D; }
+          .rw-tag text { fill: #fff; font-size: 11px; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
+          .dim-line { stroke: #8D8F96; stroke-width: 1; vector-effect: non-scaling-stroke; }
+          .dim-txt { fill: #6E727A; font-weight: 600; text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: #EFEBE4; stroke-width: 4px; stroke-linejoin: round; }
+          .lbl { pointer-events: none; }
+          .lbl .pill { fill: #fff; stroke: rgba(17, 24, 39, .1); stroke-width: 1; }
+          .lbl.person .pill { fill: #fff; }
+          .lbl .nm { fill: #1C1F24; font-size: 12px; font-weight: 650; dominant-baseline: central; }
+          .lbl .ini { fill: #fff; font-size: 10px; font-weight: 800; text-anchor: middle; dominant-baseline: central; }
+          .lbl.tag .pill { fill: rgba(255,255,255,.92); }
+          .lbl.tag .nm { fill: #4B5059; font-weight: 600; font-size: 11px; }
+          .lbl.sel .pill { stroke: #4F46E5; stroke-width: 1.6; }
+          .lbl.hit .pill { stroke: #F59E0B; stroke-width: 2.2; }
+          .rlbl { cursor: pointer; }
+          .rlbl .bg { fill: #fff; stroke: rgba(17, 24, 39, .08); }
+          .rlbl.sel .bg { stroke: #4F46E5; stroke-width: 1.8; }
+          .rlbl .t1 { fill: #16181D; font-size: 15px; font-weight: 750; dominant-baseline: central; }
+          .rlbl .t2 { fill: #6B7079; font-size: 11.5px; font-weight: 550; dominant-baseline: central; }
+          .rlbl .bar-bg { fill: #ECEAE6; }
+          .warn-shape { fill: rgba(229, 72, 77, .10); stroke: #E5484D; stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+          .sel-box { fill: none; stroke: #4F46E5; stroke-width: 1.6; vector-effect: non-scaling-stroke; pointer-events: none; }
+          .sel-box.group { stroke-dasharray: 5 4; }
+          .hover-box { fill: none; stroke: #4F46E5; stroke-opacity: .55; stroke-width: 1.4; vector-effect: non-scaling-stroke; pointer-events: none; }
+          .handle { fill: #fff; stroke: #4F46E5; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+          .handle.rot { fill: #4F46E5; stroke: #fff; cursor: grab; }
+          .rot-stem { stroke: #4F46E5; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+          .guide { stroke: #EC4899; stroke-width: 1; vector-effect: non-scaling-stroke; }
+          .dist line { stroke: #EC4899; stroke-width: 1; vector-effect: non-scaling-stroke; }
+          .dist rect { fill: #EC4899; }
+          .dist text { fill: #fff; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
+          .marquee { fill: rgba(79, 70, 229, .08); stroke: #4F46E5; stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+          .measure line.m { stroke: #0EA5E9; stroke-width: 2; vector-effect: non-scaling-stroke; }
+          .measure circle { fill: #fff; stroke: #0EA5E9; stroke-width: 2; vector-effect: non-scaling-stroke; }
+          .measure rect { fill: #0EA5E9; }
+          .measure text { fill: #fff; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
+          .ghost { opacity: .72; pointer-events: none; }
+          .ghost.bad .ghost-box { stroke: #E5484D; fill: rgba(229,72,77,.12); }
+          .ghost-box { fill: rgba(79,70,229,.06); stroke: #4F46E5; stroke-width: 1.5; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; }
+          .pulse { fill: none; stroke: #F59E0B; stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+        </style>
+        <pattern id="hatch-out" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="22" height="22" fill="#E3E8EC"/><line x1="0" y1="0" x2="0" y2="22" stroke="#D5DCE2" stroke-width="5"/>
+        </pattern>
+        <pattern id="hatch-ctx" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="16" stroke="#D3CFC6" stroke-width="2"/>
+        </pattern>
+        <pattern id="hatch-light" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="8" stroke="#ffffff" stroke-opacity=".28" stroke-width="2.5"/>
+        </pattern>
+        <pattern id="carpet" width="24" height="24" patternUnits="userSpaceOnUse">
+          <path d="M0 24 L12 12 L24 24 M0 12 L12 0 L24 12" fill="none" stroke="#000" stroke-opacity=".035" stroke-width="3"/>
+        </pattern>
+        <pattern id="grid50" width="50" height="50" patternUnits="userSpaceOnUse">
+          <path d="M50 0 H0 V50" fill="none" stroke="#8B8577" stroke-opacity=".16" stroke-width="1"/>
+        </pattern>
+        <pattern id="free-stripe" width="40" height="40" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+          <rect width="40" height="40" fill="none"/><line x1="0" y1="0" x2="0" y2="40" stroke="#94A3B8" stroke-opacity=".10" stroke-width="16"/>
+        </pattern>
+        <linearGradient id="fade-r" x1="0" x2="1"><stop offset="0" stop-color="#EAE7E0" stop-opacity="0"/><stop offset="1" stop-color="#EAE7E0" stop-opacity="1"/></linearGradient>
+        <linearGradient id="fade-b" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#EAE7E0" stop-opacity="0"/><stop offset="1" stop-color="#EAE7E0" stop-opacity="1"/></linearGradient>
+        <clipPath id="roomsClip"></clipPath>
+      </defs>
+      <g id="world">
+        <g id="L-base"></g>
+        <g id="L-walls"></g>
+        <g id="L-rooms"></g>
+        <g id="L-grid"></g>
+        <g id="L-marks"></g>
+        <g id="L-items"></g>
+        <g id="L-warn"></g>
+        <g id="L-labels"></g>
+        <g id="L-roomlabels"></g>
+        <g id="L-ui"></g>
+      </g>
+    </svg>
+
+    <!-- floating overlays -->
+    <div class="float tools edit-only" id="toolBar">
+      <button class="tool" data-tool="select" title="선택 · 이동 (V)"><i data-icon="cursor"></i></button>
+      <button class="tool" data-tool="pan" title="화면 이동 (H · Space)"><i data-icon="hand"></i></button>
+      <button class="tool" data-tool="measure" title="거리 측정 (M)"><i data-icon="ruler"></i></button>
+    </div>
+    <div class="float tools view-only" id="viewTools">
+      <button class="tool" data-tool="pan" title="화면 이동"><i data-icon="hand"></i></button>
+      <button class="tool" data-tool="measure" title="거리 측정 (M)"><i data-icon="ruler"></i></button>
+    </div>
+
+    <div class="float banner" id="banner" hidden></div>
+    <div class="float place-hint" id="placeHint" hidden></div>
+
+    <div class="float zoom">
+      <button class="btn icon flat" id="zoomOut" title="축소 (-)"><i data-icon="minus"></i></button>
+      <button class="zoom-val" id="zoomVal" title="100% 로 보기">100%</button>
+      <button class="btn icon flat" id="zoomIn" title="확대 (+)"><i data-icon="plus"></i></button>
+      <span class="sep"></span>
+      <button class="btn icon flat" id="zoomFit" title="전체 보기 (F)"><i data-icon="fit"></i></button>
+    </div>
+
+    <div class="float bottom-left">
+      <div class="scalebar" id="scalebar"><span class="bar"></span><span class="txt">1 m</span></div>
+      <div class="legend" id="legend" hidden></div>
+      <button class="warn-chip" id="warnChip" hidden><i data-icon="alert"></i><span></span></button>
+    </div>
+
+    <div class="mobile-fabs">
+      <button class="btn icon fab" id="fabLeft" title="패널"><i data-icon="users"></i></button>
+      <button class="btn icon fab" id="fabRight" title="정보"><i data-icon="info"></i></button>
+    </div>
+  </section>
+
+  <!-- ============ RIGHT PANEL ============ -->
+  <aside class="panel right" id="rightPanel">
+    <div class="inspector" id="inspector"></div>
+  </aside>
+</main>
+
+<div class="menu" id="menu" hidden></div>
+<div class="tooltip" id="tooltip" hidden></div>
+<div class="toasts" id="toasts"></div>
+<div class="modal-root" id="modalRoot" hidden></div>
+<div class="drag-ghost" id="dragGhost" hidden></div>
+
+<script src="js/sprites.js"></script>
+<script src="js/plan.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

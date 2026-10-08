@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B5BF7"/>
+      <stop offset="1" stop-color="#3A2FD0"/>
+    </linearGradient>
+    <linearGradient id="s" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#g)"/>
+  <rect x="2" y="2" width="60" height="30" rx="16" fill="url(#s)"/>
+  <!-- stylised L-shaped floor (36인실) + rooms -->
+  <path d="M19 15h28v17H26v7h-11V22h4z" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+  <rect x="15" y="43" width="9" height="7" rx="1.5" fill="#fff" opacity=".9"/>
+  <rect x="27" y="36" width="9" height="14" rx="1.5" fill="#fff" opacity=".9"/>
+  <rect x="38" y="36" width="9" height="14" rx="1.5" fill="#fff" opacity=".9"/>
+  <circle cx="36" cy="23.5" r="3.2" fill="#FFD166"/>
+</svg>
