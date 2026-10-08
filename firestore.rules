@@ -1,36 +1,54 @@
 rules_version = '2';
-// Firebase 콘솔 → Firestore Database → 규칙(Rules) 탭에 붙여넣고 '게시'
-// - 누구나 공용 배치를 볼 수 있음
-// - 편집은 익명 로그인(앱이 자동 처리)된 브라우저만, 형식·크기 검증 + 버전 번호 순차 증가
-// - 버전 기록(history)은 추가만 가능하고 수정·삭제 불가 → 잘못된 편집도 언제든 복원 가능
+// Firebase 콘솔 → Firestore Database → 규칙(Rules) 탭에 전체를 붙여넣고 '게시'
+// - 누구나 시나리오 목록을 보고 열 수 있음
+// - 저장은 익명 로그인(앱이 자동 처리)된 브라우저만, 형식·크기 검증 + 버전 번호 순차 증가
+// - 시나리오는 완전 삭제 불가(목록에서 숨김만 가능), 이전 버전(history)은 추가만 가능 → 언제든 복원
 service cloud.firestore {
   match /databases/{database}/documents {
-    function validLayout() {
-      return request.auth != null
-        && request.resource.data.keys().hasOnly(['data', 'rev', 'updatedAt', 'by', 'name'])
-        && request.resource.data.data is string
-        && request.resource.data.data.size() < 700000
-        && request.resource.data.rev is int
-        && request.resource.data.by == request.auth.uid
-        && request.resource.data.name is string
-        && request.resource.data.name.size() <= 40
-        && request.resource.data.updatedAt == request.time;
+    function signedIn() { return request.auth != null; }
+    function str(v, maxLen) { return v is string && v.size() <= maxLen; }
+    function validScenario(d) {
+      return d.keys().hasOnly(['name', 'author', 'data', 'rev', 'deleted', 'createdAt', 'updatedAt', 'by', 'createdBy'])
+        && str(d.name, 40) && d.name.size() > 0
+        && str(d.author, 30)
+        && str(d.data, 900000)
+        && d.rev is int
+        && d.deleted is bool
+        && d.updatedAt == request.time
+        && d.by == request.auth.uid;
     }
-    match /layouts/main {
+
+    match /scenarios/{sid} {
       allow read: if true;
-      allow create: if validLayout() && request.resource.data.rev == 1;
-      allow update: if validLayout() && request.resource.data.rev == resource.data.rev + 1;
+      allow create: if signedIn() && validScenario(request.resource.data)
+        && request.resource.data.rev == 1
+        && request.resource.data.deleted == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update: if signedIn() && validScenario(request.resource.data)
+        && request.resource.data.rev == resource.data.rev + 1
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy;
       allow delete: if false;
+
       match /history/{hid} {
         allow read: if true;
-        allow create: if request.auth != null
-          && request.resource.data.keys().hasOnly(['data', 'rev', 'createdAt', 'by', 'name', 'note'])
-          && request.resource.data.data is string
-          && request.resource.data.data.size() < 700000
-          && request.resource.data.by == request.auth.uid
-          && request.resource.data.createdAt == request.time;
+        allow create: if signedIn()
+          && request.resource.data.keys().hasOnly(['name', 'author', 'data', 'rev', 'savedAt', 'by', 'note'])
+          && str(request.resource.data.data, 900000)
+          && request.resource.data.savedAt == request.time
+          && request.resource.data.by == request.auth.uid;
         allow update, delete: if false;
       }
+    }
+
+    match /config/main {
+      allow read: if true;
+      allow write: if signedIn()
+        && request.resource.data.keys().hasOnly(['featuredId', 'updatedAt', 'by'])
+        && str(request.resource.data.featuredId, 64)
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.by == request.auth.uid;
     }
   }
 }

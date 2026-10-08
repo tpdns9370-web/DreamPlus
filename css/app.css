@@ -107,6 +107,33 @@ body.mode-edit .view-only { display: none !important; }
 .live-badge.offline i, .live-badge.error i { background: #E59400; animation: none; }
 .live-badge.muted { opacity: .55; }
 @keyframes livePulse { 0% { box-shadow: 0 0 0 0 rgba(18, 162, 122, .5); } 70% { box-shadow: 0 0 0 7px rgba(18, 162, 122, 0); } 100% { box-shadow: 0 0 0 0 rgba(18, 162, 122, 0); } }
+.scn-star { width: 15px !important; height: 15px !important; color: #F5A524; }
+.scn-author { font-size: 11.5px; color: var(--text-3); font-weight: 600; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirty-dot { width: 8px; height: 8px; border-radius: 50%; background: #F59E0B; box-shadow: 0 0 0 3px rgba(245, 158, 11, .2); }
+body.mode-edit #shareBtn { background: var(--panel); color: var(--text); border-color: var(--line); box-shadow: none; }
+body.mode-edit #shareBtn:hover { background: var(--panel-2); }
+#saveBtn.attn { box-shadow: 0 0 0 3px rgba(79, 70, 229, .22), 0 1px 2px rgba(79,70,229,.3); }
+.save-state.saving { color: #B45309; }
+.save-state.saving i[data-icon] { color: #F59E0B; }
+.scn-tools { display: flex; gap: 8px; }
+.scn-tools .field-search { flex: 1; }
+.scn-list { display: grid; gap: 6px; max-height: 58vh; overflow: auto; padding: 2px; }
+.scn-row { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel-2); cursor: pointer; transition: border-color .15s, background .15s; }
+.scn-row:hover { border-color: #D3CEC4; background: #fff; }
+.scn-row.cur { border-color: #C7C9F9; background: var(--accent-soft); }
+.scn-row[data-kind="deleted"] { opacity: .7; }
+.scn-main { flex: 1; min-width: 0; }
+.scn-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.scn-title b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scn-title .star { width: 15px; height: 15px; color: #F5A524; flex: none; display: inline-flex; }
+.scn-title .star svg { width: 100%; height: 100%; }
+.scn-sub { font-size: 12px; color: var(--text-3); font-weight: 550; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sv-modes { display: grid; gap: 6px; }
+.sv-mode { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; cursor: pointer; }
+.sv-mode:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.sv-mode input { margin-top: 3px; accent-color: var(--accent); }
+.sv-mode b { display: block; font-size: 13.5px; }
+.sv-mode small { color: var(--text-3); font-size: 12px; }
 .hist-list { display: grid; gap: 6px; max-height: 50vh; overflow: auto; }
 .hist-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 11px; border: 1px solid var(--line-2); background: var(--panel-2); }
 .hist-main { flex: 1; min-width: 0; }
@@ -362,7 +389,7 @@ textarea.inp { height: auto; min-height: 64px; padding: 8px 10px; resize: vertic
 .mobile-fabs { display: none; }
 
 /* ------------------------------------------------------------- menu / tooltip / toast / modal */
-.menu { position: fixed; z-index: 80; min-width: 220px; background: var(--panel); border: 1px solid var(--line); border-radius: 13px; box-shadow: var(--sh-3); padding: 6px; }
+.menu { position: fixed; z-index: 140; min-width: 220px; background: var(--panel); border: 1px solid var(--line); border-radius: 13px; box-shadow: var(--sh-3); padding: 6px; }
 .menu .mi { display: flex; align-items: center; gap: 10px; width: 100%; height: 34px; padding: 0 10px; border: 0; background: transparent; border-radius: 8px; text-align: left; font-weight: 550; font-size: 13.5px; }
 .menu .mi:hover, .menu .mi.focus { background: var(--panel-2); }
 .menu .mi i[data-icon] { width: 16px; height: 16px; color: var(--text-3); }
@@ -379,7 +406,7 @@ textarea.inp { height: auto; min-height: 64px; padding: 8px 10px; resize: vertic
 .tooltip { position: fixed; z-index: 90; pointer-events: none; background: rgba(23,25,29,.94); color: #fff; padding: 7px 10px; border-radius: 9px; font-size: 12px; box-shadow: var(--sh-2); max-width: 260px; line-height: 1.45; }
 .tooltip b { font-size: 13px; }
 .tooltip small { color: rgba(255,255,255,.65); display: block; }
-.toasts { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 100; display: grid; gap: 8px; justify-items: center; pointer-events: none; }
+.toasts { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 150; display: grid; gap: 8px; justify-items: center; pointer-events: none; }
 .toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 14px; border-radius: 12px; background: #1F2230; color: #fff; font-weight: 600; font-size: 13px; box-shadow: var(--sh-3); animation: toastIn .22s ease-out; }
 .toast .btn { height: 28px; font-size: 12px; background: rgba(255,255,255,.12); border-color: transparent; color: #fff; }
 .toast i[data-icon] { width: 16px; height: 16px; color: #8EF0CF; }
@@ -422,6 +449,15 @@ textarea.inp { height: auto; min-height: 64px; padding: 8px 10px; resize: vertic
 .err-overlay { position: fixed; left: 10px; bottom: 10px; z-index: 999; max-width: 60vw; background: #7F1D1D; color: #fff; font: 12px/1.4 ui-monospace, Consolas, monospace; padding: 10px 12px; border-radius: 10px; white-space: pre-wrap; }
 
 /* ------------------------------------------------------------- responsive */
+.brand-txt b, .seg button, .save-state, .topbar .btn, .scn-btn { white-space: nowrap; }
+.topbar > * { flex-shrink: 0; }
+.topbar .search { flex-shrink: 1; min-width: 140px; }
+@media (max-width: 1480px) {
+  .brand-txt small { display: none; }
+  .save-state span { display: none; }
+  .search { width: 220px; }
+  .scn-btn b { max-width: 150px; }
+}
 @media (max-width: 1280px) {
   :root { --left-w: 270px; --right-w: 296px; }
   .search { width: 210px; }
@@ -460,6 +496,8 @@ textarea.inp { height: auto; min-height: 64px; padding: 8px 10px; resize: vertic
   .grow { display: none; }
   #shareBtn span { display: none; }
   #shareBtn { width: 36px; padding: 0; }
-  .tb-actions .edit-only { display: none !important; }
+  .tb-actions .edit-only:not(#saveBtn) { display: none !important; }
+  #saveBtn span { display: none; }
+  #saveBtn { width: 36px; padding: 0; }
   .scalebar { display: none; }
 }

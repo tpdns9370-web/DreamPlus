@@ -26,8 +26,8 @@
   </div>
 
   <div class="scn">
-    <button class="btn ghost scn-btn" id="scnBtn" aria-haspopup="menu">
-      <span class="scn-label">시나리오</span><b id="scnName">기본 배치안</b><i data-icon="chevron"></i>
+    <button class="btn ghost scn-btn" id="scnBtn" title="시나리오 목록 (Ctrl+O)">
+      <span class="scn-label">시나리오</span><i class="scn-star" id="scnStar" data-icon="star" hidden title="대표 시나리오"></i><b id="scnName">새 시나리오</b><small class="scn-author" id="scnAuthor" hidden></small><i class="dirty-dot" id="dirtyDot" hidden title="저장하지 않은 변경"></i><i data-icon="chevron"></i>
     </button>
     <button class="live-badge connecting" id="liveBadge" hidden title=""><i></i><span>연결 중</span></button>
   </div>
@@ -49,7 +49,8 @@
   <div class="tb-actions">
     <button class="btn icon edit-only" id="undoBtn" title="실행 취소 (Ctrl+Z)"><i data-icon="undo"></i></button>
     <button class="btn icon edit-only" id="redoBtn" title="다시 실행 (Ctrl+Shift+Z)"><i data-icon="redo"></i></button>
-    <span class="save-state edit-only" id="saveState" title="이 브라우저에 자동 저장됩니다"><i data-icon="check"></i><span>저장됨</span></span>
+    <span class="save-state edit-only" id="saveState" title="편집 중인 내용은 이 브라우저에 임시 보관돼요. [저장하기]를 눌러야 시나리오로 저장됩니다."><i data-icon="check"></i><span>저장 전</span></span>
+    <button class="btn primary edit-only" id="saveBtn" title="시나리오 저장 (Ctrl+S)"><i data-icon="save"></i><span>저장하기</span></button>
     <button class="btn primary" id="shareBtn"><i data-icon="share"></i><span>공유</span></button>
     <button class="btn icon" id="moreBtn" title="더보기" aria-haspopup="menu"><i data-icon="more"></i></button>
   </div>

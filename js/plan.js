@@ -208,16 +208,18 @@
       },
     },
     {
-      id: 'meeting6', name: '회의실 · 6인', desc: '회의 테이블 + TV + 화이트보드', purpose: 'meeting',
+      id: 'meeting6', name: '회의실 · 6인', desc: '대형 회의 테이블 + 대형 모니터 + 화이트보드', purpose: 'meeting',
       build(b, out) {
-        const cx = b.x + b.w / 2, cy = b.y + b.h / 2 + 10;
+        const cx = b.x + b.w / 2, cy = b.y + 200;
         const g = nid('g');
-        item(out, 'meet6', cx, cy, 90, { group: g });
-        [-80, 0, 80].forEach((dy) => {
+        item(out, 'meetL', cx, cy, 90, { group: g, color: '#E3CFAE' });
+        [-95, 0, 95].forEach((dy) => {
           item(out, 'chairGuest', cx - 60 - 30, cy + dy, 90, { group: g });
           item(out, 'chairGuest', cx + 60 + 30, cy + dy, 270, { group: g });
         });
-        item(out, 'tv', cx, b.y + b.h - 24, 180, { name: '회의실 TV' });
+        item(out, 'display75', cx, b.y + b.h - 34, 180, { name: '회의실 모니터' });
+        item(out, 'laptop', cx, cy + 105, 180);
+        item(out, 'papers', cx - 22, cy - 40, 82);
         item(out, 'whiteboard', b.x + 32, b.y + 150, 90);
         item(out, 'plantL', b.x + b.w - 38, b.y + 40);
       },
@@ -285,16 +287,33 @@
 
   const P_STORAGE = [
     {
-      id: 'store-rack', name: '창고 · 선반형', desc: '양쪽 벽 철제 선반 4개', purpose: 'storage',
+      id: 'store-rack', name: '창고 · 랙형', desc: '양쪽 벽 앵글 랙 4개 + 박스', purpose: 'storage',
       build(b, out) {
-        [b.y + 95, b.y + 215].forEach((y) => { item(out, 'rack', b.x + 23, y, 90); item(out, 'rack', b.x + b.w - 23, y, 270); });
+        [b.y + 95, b.y + 215].forEach((y, i) => {
+          item(out, 'rack', b.x + 23, y, 90); item(out, 'rack', b.x + b.w - 23, y, 270);
+          // 랙 위 박스 (랙이 세로로 놓여 박스도 90° 회전)
+          item(out, 'box4', b.x + 23, y - 38, 90); item(out, 'box4', b.x + 23, y + 4, 90);
+          item(out, i ? 'box3' : 'boxDoc', b.x + 23, y + 42, 90);
+          item(out, 'box5', b.x + b.w - 23, y - 32, 270); item(out, i ? 'boxDoc' : 'box3', b.x + b.w - 23, y + 16, 270);
+        });
       },
     },
     {
-      id: 'store-locker', name: '창고 · 사물함형', desc: '사물함 3 + 선반 2', purpose: 'storage',
+      id: 'store-deep', name: '창고 · 깊은 랙형', desc: '깊은 랙(60cm) 3개 + 큰 박스', purpose: 'storage',
+      build(b, out) {
+        [b.y + 80, b.y + 200].forEach((y) => {
+          item(out, 'rack120d', b.x + 30, y, 90);
+          item(out, 'box6', b.x + 30, y - 32, 90); item(out, 'boxMove', b.x + 30, y + 30, 90);
+        });
+        item(out, 'rack120d', b.x + b.w - 30, b.y + 140, 270);
+        item(out, 'box5', b.x + b.w - 30, b.y + 112, 270); item(out, 'box5', b.x + b.w - 30, b.y + 164, 270);
+      },
+    },
+    {
+      id: 'store-locker', name: '창고 · 사물함형', desc: '사물함 3 + 랙 2', purpose: 'storage',
       build(b, out) {
         [b.y + 55, b.y + 145, b.y + 235].forEach((y) => item(out, 'locker', b.x + 26, y, 90));
-        [b.y + 95, b.y + 215].forEach((y) => item(out, 'rack', b.x + b.w - 23, y, 270));
+        [b.y + 95, b.y + 215].forEach((y) => { item(out, 'rack', b.x + b.w - 23, y, 270); item(out, 'box4', b.x + b.w - 23, y - 20, 270); item(out, 'boxDoc', b.x + b.w - 23, y + 24, 270); });
       },
     },
   ];

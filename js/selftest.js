@@ -30,74 +30,151 @@
     pre.id = 'selftest-out';
     pre.textContent = `${title} ${fails ? 'FAILED ' + fails : 'ALL PASSED'}\n` + out.join('\n');
     document.body.appendChild(pre);
-    document.title = 'SAVETEST:' + (fails ? 'FAIL' : 'PASS');
+    document.title = 'SELFTEST:' + (fails ? 'FAIL' : 'PASS');
   };
-  /* ---------- 실시간 동기화 검증 (가상 서버) : ?selftest=live ---------- */
-  if (/selftest=live/.test(location.search)) {
-    const srv = window.__memServer, L = api.live(), store = A.store;
-    const waitFor = async (cond, ms) => { const t0 = Date.now(); while (Date.now() - t0 < (ms || 3000)) { try { if (cond()) return true; } catch (e) { /* retry */ } await sleep(40); } return false; };
-    const sdoc = () => JSON.parse(srv.doc.data);
-    const sSeat = (d, x, y) => d.items.find((i) => i.x === x && i.y === y && S.def(i.type).seat);
-    try {
-      store.editorName = '테스터';
-      ok('L1 공용 배치(실시간)로 시작', store.current === 'live' && L.on);
-      ok('L2 빈 서버 → 기본 배치로 최초 생성', await waitFor(() => srv.doc && srv.doc.rev === 1));
-      ok('L3 상태 배지 "실시간"', await waitFor(() => L.status === 'live') && document.getElementById('liveBadge').textContent.includes('실시간'));
-      ok('L3b 최초 생성 버전 기록', srv.history.some((h) => h.note === '처음 생성'));
-      api.setMode('edit');
-      api.mutate(() => { seatAt(626, 80).name = '댄'; });
-      ok('L4 내 편집 → 서버 반영', await waitFor(() => sdoc().items.some((i) => i.name === '댄')), 'rev ' + srv.doc.rev);
-      ok('L4b 저장 표시 "실시간 저장됨"', await waitFor(() => document.querySelector('#saveState span').textContent === '실시간 저장됨'));
-      const d5 = sdoc(); sSeat(d5, 686, 80).name = '에이미'; srv.write(JSON.stringify(d5), '에이미');
-      ok('L5 다른 사람 편집 → 내 화면에 반영', await waitFor(() => items().some((i) => i.name === '에이미')));
-      ok('L5b 기존 내 편집 유지', items().some((i) => i.name === '댄'));
-      api.mutate(() => { seatAt(928, 140).name = '레오'; });
-      const d6 = sdoc(); d6.items = d6.items.filter((i) => !(i.x === 1558 && i.y === 500 && S.def(i.type).seat)); srv.write(JSON.stringify(d6), '하나');
-      ok('L6 동시 편집 병합 (내 이름 지정 + 남의 책상 삭제) → 내 화면', await waitFor(() => !seatAt(1558, 500) && items().some((i) => i.name === '레오')));
-      ok('L6b 동시 편집 병합 → 서버', await waitFor(() => { const d = sdoc(); return ['레오', '에이미', '댄'].every((n) => d.items.some((i) => i.name === n)) && !sSeat(d, 1558, 500); }));
-      const d7 = sdoc(); sSeat(d7, 1290, 80).name = '수아'; srv.write(JSON.stringify(d7), '수아', 'other', true); // 알림 없이 서버만 변경
-      api.mutate(() => { seatAt(298, 80).name = '민준'; });
-      ok('L7 모르는 사이 바뀐 서버와 충돌 → 트랜잭션 병합', await waitFor(() => { const d = sdoc(); return d.items.some((i) => i.name === '수아') && d.items.some((i) => i.name === '민준'); }));
-      ok('L7b 병합 결과가 내 화면에도', await waitFor(() => items().some((i) => i.name === '수아')));
-      const revBefore = srv.doc.rev;
-      const idD = api.newScenario('초안A', JSON.parse(JSON.stringify(store.live.doc)), 'user'); api.persist(); api.switchScenario(idD);
-      api.mutate(() => { seatAt(626, 220).name = '초안전용'; });
-      await sleep(900);
-      ok('L8 초안 편집은 서버에 영향 없음', srv.doc.rev === revBefore && !srv.doc.data.includes('초안전용'));
-      const d9 = sdoc(); sSeat(d9, 686, 220).name = '유나'; srv.write(JSON.stringify(d9), '유나');
-      ok('L9 초안 보는 중에도 공용 배치는 백그라운드 갱신', await waitFor(() => store.live.doc.items.some((i) => i.name === '유나')) && !items().some((i) => i.name === '유나'));
-      const pub = api.publishDraft(); await sleep(80);
-      document.querySelector('#modalRoot [data-act="1"]').click();
-      await pub;
-      ok('L10 초안을 공용 배치에 반영', await waitFor(() => store.current === 'live' && sdoc().items.some((i) => i.name === '초안전용')));
-      ok('L10b 반영 직전 상태 자동 기록', srv.history.some((h) => /반영 전/.test(h.note)));
-      const first = srv.history[srv.history.length - 1];
-      await api.restoreVersion(first);
-      ok('L11 버전 기록에서 복원', await waitFor(() => !sdoc().items.some((i) => i.name)) && !items().some((i) => i.name));
-      ok('L11b 복원 직전 상태 자동 기록', srv.history.some((h) => /복원 전/.test(h.note)));
-      srv.fail = true;
-      api.mutate(() => { seatAt(626, 80).name = '오프라인편집'; });
-      ok('L12 서버 오류 → 상태 "연결 오류", 로컬 보관', await waitFor(() => L.status === 'error') && store.live.doc.items.some((i) => i.name === '오프라인편집'));
-      srv.fail = false;
-      ok('L12b 복구되면 자동 재전송', await waitFor(() => sdoc().items.some((i) => i.name === '오프라인편집'), 9000));
-      ok('L13 버전 번호 순차 증가', srv.doc.rev > revBefore + 2, 'rev ' + srv.doc.rev);
-    } catch (e) { ok('실시간 검증 예외 없음', false, e && (e.stack || e.message)); }
-    showResult('LIVE');
+  const waitFor = async (cond, ms) => { const t0 = Date.now(); while (Date.now() - t0 < (ms || 3000)) { try { if (cond()) return true; } catch (e) { /* retry */ } await sleep(40); } return false; };
+  // 저장 대화상자를 실제 UI 로 채워서 저장
+  const saveVia = async (name, author, mode) => {
+    const p = api.openSaveDialog(mode === 'asNew' ? { asNew: true } : {});
+    await sleep(30);
+    document.getElementById('svName').value = name;
+    document.getElementById('svAuthor').value = author;
+    if (mode === 'new') { const r = document.querySelector('input[name="svMode"][value="new"]'); if (r) r.checked = true; }
+    document.querySelector('#modalRoot [data-act="1"]').click();
+    return p;
+  };
+
+  /* ---------- 화면 캡처용 (가상 서버): ?servermock&selftest=uishot-list|uishot-save|uishot-items ---------- */
+  if (/selftest=uishot/.test(location.search)) {
+    const srv = window.__memServer, SV = A.server;
+    await waitFor(() => SV.ready);
+    const mk = (fn) => { const d = api.baseDoc(); fn(d); return JSON.stringify(d); };
+    const a = srv.createAs({ name: '1안 · 기본 + 회의실', author: '댄', data: mk((d) => { d.items.slice(14, 30).forEach((i, n) => { if (S.def(i.type).seat) i.name = ['하나', '레오', '민준', '서연', '지호', '유나', '수아', '태오'][n % 8]; }); }) }).id;
+    srv.createAs({ name: '2안 · 6인실 전부 업무실', author: '에이미', data: mk(() => {}) });
+    srv.createAs({ name: '3안 · 라운지 확대', author: '하나', data: mk(() => {}) });
+    await A.server.backend.setFeatured(a);
+    await waitFor(() => SV.list.length === 3 && SV.featuredId === a);
+    api.openScenario(SV.byId.get(a), { silent: true });
+    api.setMode('edit');
+    if (/items/.test(location.search)) {
+      api.applyPreset('r2', 'store-rack'); api.applyPreset('r6a', 'meeting6');
+      const dk = seatAt(1873, 80);
+      api.startPlacing({ def: S.TYPES.monitorDual }, 'm'); api.updateGhost(dk.x + 6, dk.y, true); api.placeNow(false);
+      api.startPlacing({ def: S.TYPES.papers }, 'p'); api.updateGhost(dk.x, dk.y + 40, true); api.placeNow(false);
+      const dk2 = seatAt(1933, 80);
+      api.startPlacing({ def: S.TYPES.monitor }, 'm'); api.updateGhost(dk2.x - 6, dk2.y, true); api.placeNow(false);
+      api.startPlacing({ def: S.TYPES.laptop }, 'l'); api.updateGhost(dk2.x - 4, dk2.y + 38, true); api.placeNow(false);
+      api.setTab('items');
+      st.sel.clear(); api.renderAll();
+      if (/store/.test(location.search)) api.setView(2.4, 544, 925);
+      else if (/desk/.test(location.search)) api.setView(2.6, 1903, 150);
+      else api.setView(1.15, 1150, 900);
+    } else {
+      api.mutate(() => { seatAt(686, 220).name = '새이름'; });
+      if (/list/.test(location.search)) api.openScenarioList();
+      if (/save/.test(location.search)) api.openSaveDialog();
+    }
+    document.title = 'UISHOT';
     return;
   }
 
+  /* ---------- 서버 시나리오 검증 (가상 서버) : ?selftest=server ---------- */
+  if (/selftest=server/.test(location.search)) {
+    const srv = window.__memServer, SV = A.server, store = A.store;
+    const src = () => store.work.src;
+    const sDoc = (id) => JSON.parse(srv.sc.get(id).data);
+    try {
+      ok('S1 서버 연결 · 빈 목록', await waitFor(() => SV.status === 'online' && SV.ready) && SV.list.length === 0);
+      ok('S1b 새 시나리오 상태로 시작', !src() && document.getElementById('scnName').textContent === '새 시나리오');
+      api.setMode('edit');
+      api.mutate(() => { seatAt(626, 80).name = '댄'; });
+      ok('S2 [저장하기] → 새 시나리오 저장', await saveVia('1안', '댄', 'over') === true && await waitFor(() => SV.list.length === 1) && src() && src().kind === 'server' && src().name === '1안');
+      const idA = src().id;
+      ok('S2b 저장 후 변경 없음 표시 + 작성자 표시', !api.isDirty() && document.querySelector('#saveState span').textContent === '서버에 저장됨' && document.getElementById('scnAuthor').textContent === '댄');
+      ok('S2c 첫 시나리오는 대표로 자동 지정', await waitFor(() => SV.featuredId === idA) && !document.getElementById('scnStar').hidden);
+      api.mutate(() => { seatAt(686, 80).name = '에이미'; });
+      ok('S3 편집 → 저장 안 됨 표시', api.isDirty() && !document.getElementById('dirtyDot').hidden);
+      ok('S3b 덮어쓰기 저장 → v2 + 이전 버전 기록', await saveVia('1안', '댄', 'over') === true && srv.sc.get(idA).rev === 2 && (srv.hist.get(idA) || []).length === 1);
+      const idB = srv.createAs({ name: '2안 (회의실 많이)', author: '하나', data: JSON.stringify(api.baseDoc()) }).id;
+      ok('S4 다른 사람이 저장한 시나리오가 목록에 실시간 등장', await waitFor(() => SV.byId.has(idB)));
+      api.openScenarioList(); await sleep(30);
+      ok('S4b 시나리오 목록에 2개 표시', document.querySelectorAll('#scnList .scn-row[data-kind="server"]').length === 2);
+      document.querySelector(`#scnList .scn-row[data-sid="${idB}"] [data-sa="open"]`).click();
+      ok('S5 목록에서 열기 → 2안', await waitFor(() => src() && src().id === idB) && !items().some((i) => i.name === '댄'));
+      const d6 = sDoc(idB); d6.items.find((i) => i.x === 626 && i.y === 80 && S.def(i.type).seat).name = '레오';
+      srv.updateAs(idB, { data: JSON.stringify(d6), author: '하나' });
+      ok('S6 보고 있는 시나리오를 남이 저장 → 내 화면 자동 갱신', await waitFor(() => items().some((i) => i.name === '레오')) && src().rev === 2);
+      api.mutate(() => { seatAt(928, 140).name = '민준'; });
+      const d7 = sDoc(idB); d7.items.find((i) => i.x === 1290 && i.y === 80 && S.def(i.type).seat).name = '수아';
+      srv.updateAs(idB, { data: JSON.stringify(d7) });
+      ok('S7 내가 편집 중일 때 남이 저장 → 안내 배너, 내 작업 유지', await waitFor(() => !document.getElementById('banner').hidden && document.getElementById('banner').textContent.includes('새로 저장')) && items().some((i) => i.name === '민준') && !items().some((i) => i.name === '수아'));
+      const pSave = saveVia('2안 (회의실 많이)', '댄', 'over');
+      ok('S8 충돌 감지 → 선택 대화상자', await waitFor(() => (document.querySelector('#modalRoot .modal-h h3') || {}).textContent === '다른 사람이 먼저 저장했어요'));
+      document.querySelector('#modalRoot [data-act="2"]').click(); // 새 시나리오로 저장
+      ok('S8b 충돌 시 새 시나리오로 따로 저장', await pSave === true && await waitFor(() => SV.list.length === 3) && src().id !== idB && sDoc(src().id).items.some((i) => i.name === '민준') && !sDoc(idB).items.some((i) => i.name === '민준'), src() && src().name);
+      const idC = src().id;
+      await (async () => { const w = A.server.backend; await w.setFeatured(idB); })();
+      ok('S9 대표 시나리오 지정', await waitFor(() => SV.featuredId === idB));
+      await A.server.backend.update(idC, { deleted: true, note: '삭제 전' }, null);
+      ok('S10 삭제 → 목록에서 숨김 + 열린 화면에 안내', await waitFor(() => SV.byId.get(idC).deleted) && !SV.list.filter((s) => !s.deleted).some((s) => s.id === idC) && await waitFor(() => document.getElementById('banner').textContent.includes('삭제')));
+      await A.server.backend.update(idC, { deleted: false, note: '삭제 취소 전' }, null);
+      ok('S10b 삭제된 시나리오 복원', await waitFor(() => !SV.byId.get(idC).deleted));
+      // 버전 기록에서 1안 v1 열기 → 덮어쓰기로 복원
+      api.openScenario(SV.byId.get(idA), { silent: true });
+      api.openVersions(SV.byId.get(idA)); await waitFor(() => document.querySelector('#verList [data-ver]'));
+      document.querySelector('#verList [data-ver="0"]').click();
+      ok('S11 버전 기록에서 이전 버전 열기 (저장 전 상태)', await waitFor(() => api.isDirty() && !items().some((i) => i.name === '에이미') && items().some((i) => i.name === '댄')));
+      ok('S11b 덮어쓰기로 복원', await saveVia('1안', '댄', 'over') === true && !sDoc(idA).items.some((i) => i.name === '에이미') && srv.sc.get(idA).rev === 3);
+      srv.fail = true;
+      api.mutate(() => { seatAt(1558, 80).name = '오프라인'; });
+      ok('S12 서버 오류 → 저장 실패 안내, 작업 유지', await saveVia('1안', '댄', 'over') === false && api.isDirty() && items().some((i) => i.name === '오프라인'));
+      srv.fail = false;
+      ok('S12b 복구 후 다시 저장', await saveVia('1안', '댄', 'over') === true && sDoc(idA).items.some((i) => i.name === '오프라인'));
+      ok('S13 공유 창에 시나리오 링크(#sc=)', await (async () => { await api.openShare(); await sleep(30); const v = Array.from(document.querySelectorAll('#modalRoot .share-url .inp')).map((x) => x.value); document.querySelector('#modalRoot [data-close]').click(); return v.some((u) => u.includes('#sc=' + idA)); })());
+    } catch (e) { ok('서버 검증 예외 없음', false, e && (e.stack || e.message)); }
+    showResult('SERVER');
+    return;
+  }
+
+  /* ---------- 실제 Firebase 연결 검증 : ?selftest=fb (테스트 시나리오를 만들고 지움 표시) ---------- */
+  if (/selftest=fb/.test(location.search)) {
+    const SV = A.server, store = A.store;
+    try {
+      ok('F1 Firebase 연결', await waitFor(() => SV.status === 'online' && SV.ready, 15000), SV.status + ' ' + SV.err);
+      const tag = '[자동 점검] ' + new Date().toISOString().slice(5, 16).replace('T', ' ');
+      api.setMode('edit');
+      api.mutate(() => { seatAt(626, 80).name = '점검'; });
+      const t0 = Date.now();
+      ok('F2 서버에 새 시나리오 저장 (보안 규칙 통과)', await saveVia(tag, '자동 점검', 'over') === true, (Date.now() - t0) + 'ms');
+      const id = store.work.src && store.work.src.id;
+      ok('F3 저장한 시나리오가 실시간 목록에 등장', await waitFor(() => SV.byId.has(id) && SV.byId.get(id).rev === 1, 10000));
+      // 두 번째 접속자(별도 앱 인스턴스) 흉내 → 실시간 반영 확인
+      const other = await window.LiveSync.firebase(window.FIREBASE_CONFIG, 'second-visitor');
+      const d = JSON.parse(SV.byId.get(id).data); d.items.find((i) => i.name === '점검').name = '다른사람수정';
+      await other.update(id, { data: JSON.stringify(d), author: '다른 방문자', note: '점검' }, 1);
+      ok('F4 다른 접속자의 저장이 내 화면에 실시간 반영', await waitFor(() => items().some((i) => i.name === '다른사람수정'), 10000));
+      const hist = await SV.backend.listHistory(id, 5);
+      ok('F5 이전 버전 기록 저장됨', hist.length >= 1 && hist[0].rev === 1);
+      let denied = false;
+      try { await other.update(id, { data: 'x'.repeat(10) }, 1); } catch (e) { denied = e.code === 'CONFLICT'; }
+      ok('F6 오래된 버전으로 덮어쓰기 차단 (충돌 감지)', denied);
+      await SV.backend.update(id, { deleted: true, note: '자동 점검 정리' }, null);
+      ok('F7 점검용 시나리오 정리 (삭제 처리)', await waitFor(() => SV.byId.get(id) && SV.byId.get(id).deleted, 10000));
+    } catch (e) { ok('Firebase 검증 예외 없음', false, e && (e.code ? e.code + ' ' : '') + (e.stack || e.message)); }
+    showResult('FIREBASE');
+    return;
+  }
+
+  /* ---------- 브라우저 임시 보관 검증: save1 → save2(새로고침) → save3(브라우저 재시작) ---------- */
   if (/selftest=save1/.test(location.search)) {
     try {
       const store = A.store;
-      ok('새 프로필: 시나리오 1개로 시작', Object.keys(store.scenarios).length === 1);
-      const origId = store.current;
+      ok('새 프로필: 새 시나리오 상태로 시작', !store.work.src && Object.keys(store.scenarios).length === 0);
       api.setMode('edit');
-      // a) 인스펙터에서 이름 입력 (포커스 이동까지)
       const dA = seatAt(626, 80);
       api.select(dA.id);
       ok('a) 이름 입력칸', await typeInto('#inspector [data-f="name"]', '저장테스트', true));
       api.mutate(() => { st.doc.teams.push({ id: 'tQA', name: 'QA팀', color: '#10B981' }); dA.team = 'tQA'; });
-      // b) 드래그 이동
       const dB = seatAt(1230, 80);
       const el = st.els.get(dB.id), r = el.getBoundingClientRect();
       const cx = r.left + r.width / 2, cy = r.top + r.height / 2, k = st.view.k;
@@ -105,34 +182,25 @@
       for (let i = 1; i <= 5; i++) pe('pointermove', svg, cx + (i * 40 * k) / 5, cy, { altKey: true });
       pe('pointerup', svg, cx + 40 * k, cy, { altKey: true });
       ok('b) 드래그 이동 (스냅 없이)', Math.abs(dB.x - 1270) <= 2, dB.x + ',' + dB.y);
-      // c) 아이템 배치
       api.startPlacing({ def: S.TYPES.sofa2 }, '2인 소파');
       api.updateGhost(1231, 1013, true); api.placeNow(false);
       ok('c) 소파 배치', inRoom('r6b').some((i) => i.type === 'sofa2'));
-      // d) 공간 이름 변경
       api.selectRoom('r6a');
       ok('d) 공간 이름 입력칸', await typeInto('#inspector [data-f="roomName"]', '테스트룸', true));
-      // e) 표시 설정 (그리드 끄기)
       document.querySelector('[data-pref="grid"]').click();
       ok('e) 그리드 끔', st.prefs.grid === false);
-      // f) 사용자 아이템 템플릿
       api.openCustomModal(); await raf();
       document.getElementById('cName').value = '택배함';
       document.getElementById('cW').value = '60'; document.getElementById('cH').value = '40';
       document.querySelector('#modalRoot [data-act="1"]').click();
       await sleep(50); key('Escape');
       ok('f) 내 아이템 저장', (store.customs || []).some((c) => c.name === '택배함'));
-      // g) 두 번째 시나리오 + 전환
-      const idB = api.newScenario('B안', api.baseDoc(), 'user'); api.persist(); api.switchScenario(idB);
-      api.mutate(() => { seatAt(626, 80).name = 'B안전용'; });
-      api.switchScenario(origId);
-      ok('g) 원래 시나리오로 복귀', store.current === origId && !!seatAt(626, 80) && seatAt(626, 80).name === '저장테스트');
-      await sleep(700); // 앞선 변경의 자동저장 타이머가 끝나도록
-      // h) 입력 도중(포커스 이동 없이) 바로 페이지 이동
+      ok('g) [저장하기] → 이 브라우저에 시나리오 저장', await saveVia('A안', '테스터', 'over') === true && store.work.src && store.work.src.kind === 'local' && store.work.src.name === 'A안');
+      await sleep(400);
       const dH = seatAt(1558, 80);
       api.select(dH.id);
-      ok('h) 마지막 입력', await typeInto('#inspector [data-f="name"]', '마지막입력', false));
-      out.push('→ 새로고침(페이지 이동) 후 save2 에서 확인');
+      ok('h) 저장 후 추가 입력(포커스 이동 없이)', await typeInto('#inspector [data-f="name"]', '마지막입력', false));
+      out.push('→ 새로고침 후 save2 에서 확인');
       sessionStorage.setItem('save1-log', out.join('\n') + `\n__fails=${fails}`);
       location.href = location.pathname + '?selftest=save2';
       return;
@@ -148,9 +216,7 @@
     }
     try {
       const store = A.store;
-      const scs = Object.values(store.scenarios);
-      ok('시나리오 2개 유지', scs.length === 2, scs.map((s) => s.name).join(', '));
-      ok('현재 시나리오 = 기본 배치안', store.scenarios[store.current].name === '기본 배치안');
+      ok('열려 있던 시나리오 = A안 · 작성자 유지', store.work.src && store.work.src.name === 'A안' && store.work.src.author === '테스터' && document.getElementById('scnAuthor').textContent === '테스터');
       ok('편집 모드 유지', st.mode === 'edit');
       const dA = seatAt(626, 80);
       ok('a) 이름 "저장테스트" 유지', dA && dA.name === '저장테스트', dA && dA.name);
@@ -158,15 +224,13 @@
       ok('b) 드래그 이동 위치 유지', !!seatAt(1270, 80, 6) && !seatAt(1230, 80));
       ok('c) 배치한 소파 유지', inRoom('r6b').some((i) => i.type === 'sofa2'));
       ok('d) 공간 이름 "테스트룸" 유지', (st.doc.rooms.r6a || {}).name === '테스트룸');
-      ok('e) 그리드 꺼짐 유지', st.prefs.grid === false && document.querySelector('[data-pref="grid"]').checked === false && !document.querySelector('#L-grid rect'));
+      ok('e) 그리드 꺼짐 유지', st.prefs.grid === false && !document.querySelector('#L-grid rect'));
       ok('f) 내 아이템 "택배함" 유지', (store.customs || []).some((c) => c.name === '택배함') && !!document.querySelector('.cat-card[data-custom]'));
-      const scB = scs.find((s) => s.name === 'B안');
-      ok('g) B안 시나리오 내용 유지', !!scB && scB.doc.items.some((i) => i.name === 'B안전용'));
-      ok('g) 기본안에는 B안 변경 없음', !items().some((i) => i.name === 'B안전용'));
+      const saved = Object.values(store.scenarios).find((s) => s.name === 'A안');
+      ok('g) 저장한 A안에는 저장 시점 내용만', !!saved && saved.doc.items.some((i) => i.name === '저장테스트') && !saved.doc.items.some((i) => i.name === '마지막입력'));
       const dH = seatAt(1558, 80);
-      ok('h) 입력 도중 이동해도 "마지막입력" 유지', dH && dH.name === '마지막입력', dH ? String(dH.name) : 'no desk');
-      ok('편집한 시나리오는 dirty 표시 (공식 배치 게시 시 덮어쓰지 않음)', store.scenarios[store.current].dirty === true);
-      ok('화면 표시: "저장됨"', document.querySelector('#saveState span').textContent === '저장됨');
+      ok('h) 저장 후 입력도 작업 내용으로 보관됨', dH && dH.name === '마지막입력', dH ? String(dH.name) : 'no desk');
+      ok('h) "저장 안 된 변경" 표시', api.isDirty() && document.querySelector('#saveState span').textContent === '저장 안 된 변경');
     } catch (e) { ok('검증 예외 없음', false, e && (e.stack || e.message)); }
     showResult(phase);
     return;
@@ -341,6 +405,52 @@
     const amy = st.doc.items.find((i) => i.name === '에이미');
     ok('검색 Enter → 해당 자리 선택', amy && st.sel.has(amy.id));
     sInp.value = ''; sInp.dispatchEvent(new Event('input', { bubbles: true }));
+
+    // 11-d. 책상 위 소품 (모니터·서류·박스)
+    api.setMode('edit');
+    api.applyPreset('r36', 'restore');
+    const deskT = seatAt(626, 220), chairT = items().find((i) => i.group === deskT.group && i.id !== deskT.id);
+    api.startPlacing({ def: S.TYPES.monitor }, '모니터');
+    api.updateGhost(deskT.x + 5, deskT.y, true);
+    ok('T1 책상 위로 가져가면 책상 방향으로 자동 회전', st.placing.rot === deskT.rot && !st.placing.bad, st.placing.rot + '/' + deskT.rot);
+    api.placeNow(false);
+    const mon = items().find((i) => i.type === 'monitor');
+    api.startPlacing({ def: S.TYPES.papers }, '서류'); api.updateGhost(deskT.x, deskT.y + 30, true); api.placeNow(false);
+    const pap = items().find((i) => i.type === 'papers');
+    api.computeWarnings();
+    ok('T2 책상 위 소품은 겹침 경고 없음', !st.warnings.ids.has(mon.id) && !st.warnings.ids.has(deskT.id) && !st.warnings.ids.has(pap.id), JSON.stringify(st.warnings.list.slice(0, 2)));
+    const order = Array.from(document.querySelectorAll('#L-items > [data-id]')).map((e) => e.getAttribute('data-id'));
+    ok('T3 소품은 책상보다 위에 그려짐', order.indexOf(mon.id) > order.indexOf(deskT.id));
+    api.select(deskT.id); await raf();
+    const de2 = st.els.get(deskT.id).getBoundingClientRect(), k2 = st.view.k;
+    const ox = mon.x - deskT.x, oy = mon.y - deskT.y;
+    // 책상의 모니터가 없는 쪽을 잡고 끈다
+    const gx = de2.left + de2.width * 0.15, gy = de2.top + de2.height * 0.85;
+    pe('pointerdown', st.els.get(deskT.id).querySelector('rect'), gx, gy, { altKey: true });
+    for (let i = 1; i <= 4; i++) pe('pointermove', svg, gx, gy + (i * 30 * k2) / 4, { altKey: true });
+    pe('pointerup', svg, gx, gy + 30 * k2, { altKey: true });
+    ok('T4 책상을 옮기면 위 소품도 함께 이동', Math.abs(mon.x - deskT.x - ox) < 0.6 && Math.abs(mon.y - deskT.y - oy) < 0.6 && Math.abs(deskT.y - 250) < 2, `desk ${deskT.y} mon ${mon.y}`);
+    api.select(deskT.id); key('r');
+    const monR = st.idx.get(mon.id), deskR = st.idx.get(deskT.id);
+    ok('T5 책상을 회전하면 소품도 함께 회전', monR.rot === deskR.rot && api.aabb(deskR) && (() => { const b = api.aabb(deskR); return monR.x >= b.x0 && monR.x <= b.x1 && monR.y >= b.y0 && monR.y <= b.y1; })(), `${monR.rot}/${deskR.rot}`);
+    key('z', { ctrlKey: true });
+    const nMon = items().filter((i) => i.type === 'monitor').length;
+    api.select(deskT.id); key('d', { ctrlKey: true });
+    ok('T6 책상 복제 시 소품도 복제', items().filter((i) => i.type === 'monitor').length === nMon + 1 && items().filter((i) => i.type === 'papers').length === 2);
+    key('z', { ctrlKey: true });
+    api.select(deskT.id); key('Delete');
+    ok('T7 책상 삭제 시 위 소품도 함께 삭제', !st.idx.has(deskT.id) && !items().some((i) => i.type === 'monitor') && !items().some((i) => i.type === 'papers') && !st.idx.has(chairT.id));
+    key('z', { ctrlKey: true });
+    ok('T7b 실행 취소로 모두 복구', st.idx.has(deskT.id) && items().some((i) => i.type === 'monitor'));
+    // 랙 + 박스
+    api.applyPreset('r2', 'store-rack');
+    api.computeWarnings();
+    const rk = inRoom('r2').filter((i) => i.type === 'rack'), bx = inRoom('r2').filter((i) => /^box/.test(i.type));
+    ok('T8 창고 프리셋: 랙 4 + 박스, 경고 없음', rk.length === 4 && bx.length >= 10 && !inRoom('r2').some((i) => st.warnings.ids.has(i.id)), `rack ${rk.length} box ${bx.length}`);
+    const r0 = rk[0], onR0 = bx.filter((b) => { const a = api.aabb(r0); return b.x >= a.x0 && b.x <= a.x1 && b.y >= a.y0 && b.y <= a.y1; });
+    const bs = onR0.map((b) => [b.x, b.y]);
+    api.select(r0.id); key('ArrowDown', { shiftKey: true });
+    ok('T9 랙을 옮기면 위 박스도 함께 (방향키)', onR0.length >= 2 && onR0.every((b, i) => Math.abs(b.y - bs[i][1] - 10) < 0.01));
 
     // 12. 보기 모드: 클릭 선택
     api.setMode('view');

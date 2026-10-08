@@ -75,6 +75,9 @@
     distV: '<rect x="7" y="3" width="10" height="4" rx="1"/><rect x="7" y="10" width="10" height="4" rx="1"/><rect x="7" y="17" width="10" height="4" rx="1"/>',
     door: '<path d="M4 21h16"/><path d="M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17"/><circle cx="14.5" cy="12" r=".9" fill="currentColor"/>',
     seat: '<rect x="4" y="4" width="16" height="7" rx="1.5"/><circle cx="12" cy="17" r="3.5"/>',
+    save: '<path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M7 3v5h8V3"/><rect x="7" y="13" width="10" height="6" rx="1"/>',
+    folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    star: '<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z" fill="currentColor"/>',
   };
   const svgIcon = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
   const ic = (n) => `<i data-icon="${n}">${svgIcon(n)}</i>`;
@@ -82,7 +85,8 @@
 
   const TEAM_COLORS = ['#6366F1', '#0EA5E9', '#10B981', '#F59E0B', '#EF4444', '#EC4899', '#8B5CF6', '#14B8A6', '#F97316', '#84CC16', '#06B6D4', '#A855F7'];
   const ITEM_COLORS = ['#41464E', '#FBFAF7', '#EBDCC4', '#A9784F', '#7E8FA5', '#B4825A', '#93A3B5', '#A5B4FC', '#FDBA74', '#86EFAC', '#FDA4AF', '#C4B5FD', '#FDE68A', '#99F6E4'];
-  const COLORABLE = new Set(['chair', 'chairExec', 'chairGuest', 'stool', 'round2', 'square2', 'round4', 'meet4', 'meet6', 'meet8', 'coffee', 'sideTable', 'sofa2', 'sofa3', 'lounge', 'booth', 'rug', 'cabinet', 'bookshelf', 'locker', 'partition', 'custom']);
+  const COLORABLE = new Set(['chair', 'chairExec', 'chairGuest', 'stool', 'round2', 'square2', 'round4', 'meet4', 'meet6', 'meet8', 'meetL', 'coffee', 'sideTable', 'sofa2', 'sofa3', 'lounge', 'booth', 'rug', 'cabinet', 'bookshelf', 'locker', 'partition', 'custom',
+    'rack', 'rack90', 'rack150', 'rack120d', 'rack150d', 'rack180d', 'box1', 'box2', 'box3', 'box4', 'box5', 'box6', 'boxMove', 'boxDoc']);
 
   /* ================================================================ state */
   const DEFAULT_PREFS = {
@@ -109,6 +113,23 @@
   const isTable = (it) => !!def(it).table;
   const isArch = (it) => !!def(it).arch;
   const isFloor = (it) => !!(def(it).floor || it.floor);
+  // 책상 위 소품(모니터·서류·박스 …)과 그것을 올려 둘 수 있는 면(책상·테이블·수납·랙)
+  const isTop = (it) => !!def(it).top;
+  const isSurface = (it) => { const d = def(it); return !d.top && !!(d.seat || d.table || d.cat === 'storage' || d.cat === 'rack' || it.type === 'tv'); };
+  function pointOn(it, x, y, pad) {
+    const [lx, ly] = rotVec(x - it.x, y - it.y, -(it.rot || 0));
+    return Math.abs(lx) <= it.w / 2 + (pad || 0) && Math.abs(ly) <= it.h / 2 + (pad || 0);
+  }
+  /** 움직이는 면(책상·랙) 위에 놓인 소품까지 함께 묶는다 */
+  function withAttached(items, exclude) {
+    const ids = new Set(items.map((i) => i.id));
+    if (exclude) exclude.forEach((id) => ids.add(id));
+    const surfaces = items.filter(isSurface);
+    if (!surfaces.length) return items;
+    const extra = state.doc.items.filter((t) => isTop(t) && !t.locked && !ids.has(t.id) && surfaces.some((s) => pointOn(s, t.x, t.y, 1)));
+    return items.concat(extra);
+  }
+  const surfaceAt = (x, y) => { const arr = state.doc.items.filter((s) => isSurface(s) && pointOn(s, x, y)); return arr[arr.length - 1] || null; };
   const typeName = (it) => (it.type === 'custom' ? '사용자 아이템' : def(it).name);
   const teamOf = (id) => (id && state.doc.teams.find((t) => t.id === id)) || null;
   const teamColor = (id) => { const t = teamOf(id); return t ? t.color : null; };
@@ -214,16 +235,17 @@
   }
 
   /* ============================================================ storage */
+  // 작업 중인 배치(store.work)는 이 브라우저에 자동 보관 → [저장하기] 를 눌러야 서버 시나리오로 저장된다
   const LS_KEY = 'inertia17f:v1';
-  const BUILTIN_STAMP = 'builtin:2026-10-08';
-  let store = { v: 1, current: null, scenarios: {}, prefs: {}, mode: 'view', customs: [], seen: false, dismissed: '', live: null, editorName: '' };
-  let official = null; // { stamp, doc }
+  let store = { v: 2, scenarios: {}, prefs: {}, mode: 'view', customs: [], seen: false, work: null, authorName: '' };
+  let official = null; // { stamp, doc } — layout.json (선택)
 
   function loadStore() {
     try {
       const raw = localStorage.getItem(LS_KEY);
-      if (raw) { const s = JSON.parse(raw); if (s && typeof s === 'object' && s.scenarios) store = Object.assign(store, s); }
+      if (raw) { const s = JSON.parse(raw); if (s && typeof s === 'object') store = Object.assign(store, s); }
     } catch (e) { /* storage unavailable */ }
+    if (!store.scenarios || typeof store.scenarios !== 'object') store.scenarios = {};
   }
   function persist() {
     try { localStorage.setItem(LS_KEY, JSON.stringify(store)); return true; } catch (e) { return false; }
@@ -231,30 +253,16 @@
   let saveTimer = 0;
   function scheduleSave() {
     if (state.shared) { state.shared.dirty = true; renderBanner(); return; }
+    if (store.work) store.work.doc = state.doc;
     clearTimeout(saveTimer);
-    if (isLive()) {
-      store.live.doc = state.doc;
-      setSaveText('동기화 대기', true);
-      saveTimer = setTimeout(writeNow, 350);
-      schedulePush();
-      return;
-    }
-    const sc = store.scenarios[store.current];
-    if (sc) { sc.dirty = true; sc.updated = Date.now(); }
-    setSaveText('저장 중…', true);
-    saveTimer = setTimeout(writeNow, 350);
+    saveTimer = setTimeout(writeNow, 300);
   }
   function writeNow() {
     clearTimeout(saveTimer); saveTimer = 0;
-    const ok = persist();
-    if (isLive()) return; // 실시간 모드의 상태 표시는 동기화 결과가 담당
-    setSaveText(ok ? '저장됨' : '저장 실패', false);
+    persist();
+    updateDirtyUI();
   }
-  function setSaveText(t, busy) {
-    const el = $('#saveState');
-    el.classList.toggle('saving', !!busy); el.querySelector('span').textContent = t;
-  }
-  // 탭 닫기 · 새로고침 · 다른 앱 전환 시: 입력 중이던 내용 확정 + 대기 중인 저장 즉시 기록
+  // 탭 닫기 · 새로고침 · 다른 앱 전환 시: 입력 중이던 내용 확정 + 대기 중인 보관 즉시 기록
   function flushSave() {
     if (hist.pending !== null && !drag) end();
     if (saveTimer) writeNow();
@@ -262,6 +270,13 @@
   window.addEventListener('pagehide', flushSave);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
   function savePrefs() { store.prefs = state.prefs; persist(); }
+  function setSaveText(t, busy) {
+    const el = $('#saveState');
+    el.classList.toggle('saving', !!busy); el.querySelector('span').textContent = t;
+    el.title = t + ' — 편집 중인 내용은 이 브라우저에 임시 보관되고, [저장하기]를 눌러야 시나리오로 저장돼요.';
+    const i = el.querySelector('i[data-icon]');
+    if (i && i.dataset.icon !== (busy ? 'edit' : 'check')) { i.dataset.icon = busy ? 'edit' : 'check'; i.innerHTML = svgIcon(i.dataset.icon); }
+  }
 
   function normalizeDoc(d) {
     if (!d || typeof d !== 'object') throw new Error('잘못된 배치 파일입니다.');
@@ -297,14 +312,13 @@
     return { v: 1, items: out, rooms, teams, meta: Object.assign({}, d.meta || {}) };
   }
   const cloneDoc = (d) => JSON.parse(JSON.stringify(d));
-
-  function newScenario(name, doc, source, stamp) {
-    const id = 'scn_' + nid();
-    store.scenarios[id] = { id, name, created: Date.now(), updated: Date.now(), source: source || 'user', stamp: stamp || '', dirty: false, doc };
-    return id;
+  function sortKeys(v) {
+    if (Array.isArray(v)) return v.map(sortKeys);
+    if (v && typeof v === 'object') { const o = {}; Object.keys(v).sort().forEach((k) => { if (v[k] !== undefined) o[k] = sortKeys(v[k]); }); return o; }
+    return v;
   }
+  const canon = (v) => JSON.stringify(sortKeys(v));
   function baseDoc() { return official ? cloneDoc(official.doc) : P.defaultDoc(); }
-  function baseStamp() { return official ? official.stamp : BUILTIN_STAMP; }
 
   async function loadOfficial() {
     if (!/^https?:/.test(location.protocol)) return null;
@@ -312,48 +326,16 @@
       const res = await fetch('layout.json', { cache: 'no-cache' });
       if (!res.ok) return null;
       const j = await res.json();
-      const doc = normalizeDoc(j.doc || j);
-      const stamp = 'official:' + ((j.doc && j.doc.meta && j.doc.meta.published) || (j.meta && j.meta.published) || j.exported || doc.items.length);
-      return { stamp, doc, name: j.scenario || '공식 배치안' };
+      return { doc: normalizeDoc(j.doc || j), name: j.scenario || '공식 배치안' };
     } catch (e) { return null; }
   }
-
-  function ensureScenarios(liveOn) {
-    const ids = Object.keys(store.scenarios);
-    if (!ids.length) {
-      // 실시간 공용 배치가 있으면 초안은 필요할 때만 만든다
-      if (!liveOn) store.current = newScenario(official ? official.name : '기본 배치안', baseDoc(), 'official', baseStamp());
-      persist();
-      return;
-    }
-    // 공식 배치가 갱신되었으면 손대지 않은 시나리오는 자동 갱신
-    let notice = false;
-    ids.forEach((id) => {
-      const sc = store.scenarios[id];
-      try { sc.doc = normalizeDoc(sc.doc); } catch (e) { sc.doc = P.defaultDoc(); }
-      if (sc.source === 'official' && sc.stamp !== baseStamp()) {
-        if (!sc.dirty) { sc.doc = baseDoc(); sc.stamp = baseStamp(); }
-        else if (official && store.dismissed !== official.stamp) notice = true;
-      }
-    });
-    if (!store.scenarios[store.current] && !(liveOn && store.current === LIVE_ID)) store.current = ids[0];
-    state.officialNotice = notice;
-    persist();
-  }
-  const scenarioDoc = (id) => (id === LIVE_ID ? store.live.doc : store.scenarios[id].doc);
-  function switchScenario(id) {
-    if (id === LIVE_ID ? !live.on : !store.scenarios[id]) return;
-    state.shared = null;
-    store.current = id; persist();
-    state.doc = scenarioDoc(id);
-    hist.undo = []; hist.redo = []; hist.pending = null;
-    state.sel.clear(); state.selRoom = null; state.highlight = null;
-    renderAll(); renderBanner(); renderLiveBadge();
-    if (isLive()) setLiveSaveText(); else setSaveText('저장됨', false);
-    $('#scnName').textContent = currentName();
+  function newLocalScenario(name, author, doc) {
+    const id = 'scn_' + nid();
+    store.scenarios[id] = { id, name, author: author || '', created: Date.now(), updated: Date.now(), doc };
+    return id;
   }
 
-  /* ============================================================ history */
+  /* ============================================================ history (실행 취소) */
   const hist = { undo: [], redo: [], pending: null, coalesce: null, ctime: 0 };
   const snap = () => JSON.stringify(state.doc);
   function begin() { if (hist.pending === null) hist.pending = snap(); }
@@ -377,9 +359,7 @@
   function mutate(fn, coalesce) { begin(); fn(); end(coalesce); renderAll(); }
   function restoreDoc(json) {
     const d = JSON.parse(json);
-    if (state.shared) state.shared.doc = d;
-    else if (store.current === LIVE_ID) store.live.doc = d;
-    else store.scenarios[store.current].doc = d;
+    if (state.shared) state.shared.doc = d; else if (store.work) store.work.doc = d;
     state.doc = d;
   }
   function undo() {
@@ -393,224 +373,417 @@
     scheduleSave(); renderAll(); toast('다시 실행', { icon: 'redo', ms: 1200 });
   }
 
-  /* ============================================================ live sync (공용 배치) */
-  const LIVE_ID = 'live';
-  const live = {
-    on: false, backend: null, status: 'off', err: '', base: null, meta: null,
-    pushing: false, again: false, pushTimer: 0, pending: null, lastPushed: null,
-    lastHistory: 0, toastAt: 0, seeding: false, ready: false,
-  };
-  const isLive = () => live.on && !state.shared && store.current === LIVE_ID;
-  function sortKeys(v) {
-    if (Array.isArray(v)) return v.map(sortKeys);
-    if (v && typeof v === 'object') { const o = {}; Object.keys(v).sort().forEach((k) => { if (v[k] !== undefined) o[k] = sortKeys(v[k]); }); return o; }
-    return v;
-  }
-  const canon = (v) => JSON.stringify(sortKeys(v));
-  /** 3-way 병합 (아이템 단위): 서버(r) 기준으로 내 변경(base→local)만 덮어쓴다 */
-  function mergeById(b, l, r) {
-    const B = new Map(b.map((x) => [x.id, x])), Lm = new Map(l.map((x) => [x.id, x])), R = new Map(r.map((x) => [x.id, x]));
-    const out = r.slice();
-    const pos = new Map(out.map((x, i) => [x.id, i]));
-    B.forEach((bx, id) => {
-      const lx = Lm.get(id);
-      if (!lx) { if (pos.has(id)) out[pos.get(id)] = null; }
-      else if (canon(lx) !== canon(bx)) { if (pos.has(id)) out[pos.get(id)] = lx; else out.push(lx); }
-    });
-    Lm.forEach((lx, id) => { if (!B.has(id) && !R.has(id)) out.push(lx); });
-    return out.filter(Boolean);
-  }
-  function merge3(b, l, r) {
-    const rooms = Object.assign({}, r.rooms);
-    new Set(Object.keys(b.rooms || {}).concat(Object.keys(l.rooms || {}))).forEach((k) => {
-      if (canon(l.rooms[k] || null) !== canon(b.rooms[k] || null)) { if (l.rooms[k]) rooms[k] = l.rooms[k]; else delete rooms[k]; }
-    });
-    return { v: 1, items: mergeById(b.items, l.items, r.items), rooms, teams: mergeById(b.teams || [], l.teams || [], r.teams || []), meta: Object.assign({}, r.meta) };
-  }
-  const editorName = () => store.editorName || '익명';
-  function setBase(doc, rev) {
-    live.base = { doc: cloneDoc(doc), str: canon(doc), rev };
-    store.live.base = { doc: live.base.doc, rev };
-  }
-  const liveDirty = () => !!live.base && canon(store.live.doc) !== live.base.str;
-  function replaceLiveDoc(d, fromOthers) {
-    store.live.doc = d;
-    if (isLive()) {
-      state.doc = d;
-      if (fromOthers) { hist.undo = []; hist.redo = []; if (hist.pending !== null) hist.pending = snap(); }
-      renderAll();
-    }
-    persist();
-  }
-
-  async function connectLive() {
-    live.on = true;
-    setLiveStatus('connecting');
-    try {
-      const mock = /[?&](livemock|selftest=live)\b/.test(location.search);
-      live.backend = mock ? window.LiveSync.memory() : await window.LiveSync.firebase(window.FIREBASE_CONFIG);
-      live.backend.start(onLiveSnap, (err) => { live.err = (err && err.message) || String(err); setLiveStatus('error'); });
-    } catch (e) {
-      live.err = e.message; setLiveStatus('offline');
-    }
-  }
-  function onLiveSnap(s) {
-    if (!s.exists) { if (!live.seeding) { live.seeding = true; pushLive(true); } return; }
-    live.meta = { rev: s.rev, by: s.by, name: s.name, updatedAt: s.updatedAt };
-    setLiveStatus('live');
-    if (live.base && s.rev <= live.base.rev) { live.ready = true; if (liveDirty()) schedulePush(200); setLiveSaveText(); return; }
-    if (s.data === live.lastPushed) { setBase(normalizeDoc(JSON.parse(s.data)), s.rev); persist(); live.ready = true; return; }
-    if (drag || live.pushing) { live.pending = s; return; }
-    applyRemote(s);
-  }
-  function applyRemote(s) {
-    let remote;
-    try { remote = normalizeDoc(JSON.parse(s.data)); } catch (e) { return; }
-    const dirty = liveDirty();
-    const next = dirty ? merge3(live.base.doc, store.live.doc, remote) : remote;
-    const changed = canon(next) !== canon(store.live.doc);
-    setBase(remote, s.rev);
-    if (changed) replaceLiveDoc(next, true); else persist();
-    if (dirty) schedulePush(200);
-    const mine = s.by && live.backend && s.by === live.backend.uid();
-    if (changed && !mine && live.ready && isLive() && Date.now() - live.toastAt > 5000) {
-      live.toastAt = Date.now();
-      toast(`${s.name || '다른 사용자'} 님이 공용 배치를 수정했어요`, { icon: 'users', ms: 2400 });
-    }
-    live.ready = true;
-    setLiveSaveText();
-  }
-  function schedulePush(ms) {
-    if (!live.on) return;
-    clearTimeout(live.pushTimer);
-    live.pushTimer = setTimeout(() => pushLive(false), ms == null ? 500 : ms);
-  }
-  async function pushLive(seed) {
-    if (!live.backend) return;
-    if (live.pushing) { live.again = true; return; }
-    if (drag) { schedulePush(300); return; }
-    const local = cloneDoc(store.live.doc);
-    const localStr = canon(local);
-    if (!seed && live.base && localStr === live.base.str) { setLiveSaveText(); return; }
-    const baseSnap = live.base;
-    live.pushing = true;
-    if (isLive()) setSaveText('동기화 중…', true);
-    try {
-      const res = await live.backend.commit((cur) => {
-        if (!cur) return { data: JSON.stringify(local), name: editorName() };
-        if (!baseSnap) return { skip: true };
-        if (cur.rev === baseSnap.rev) return { data: JSON.stringify(local), name: editorName() };
-        return { data: JSON.stringify(merge3(baseSnap.doc, local, normalizeDoc(JSON.parse(cur.data)))), name: editorName() };
-      });
-      const out = normalizeDoc(JSON.parse(res.data));
-      if (!res.skipped) live.lastPushed = res.data;
-      setBase(out, res.rev);
-      const nowLocal = store.live.doc;
-      if (canon(nowLocal) !== localStr) { replaceLiveDoc(merge3(local, nowLocal, out), false); schedulePush(150); }
-      else if (canon(out) !== localStr) replaceLiveDoc(out, true);
-      else persist();
-      if (!res.skipped) { maybeHistory(res, seed ? '처음 생성' : ''); live.seeding = false; }
-      live.ready = true;
-      setLiveStatus('live'); setLiveSaveText();
-    } catch (e) {
-      live.err = (e && e.message) || String(e);
-      if (isLive()) setSaveText('동기화 실패 · 재시도 중', true);
-      setLiveStatus('error');
-      schedulePush(5000);
-    } finally {
-      live.pushing = false;
-      if (live.pending) { const p = live.pending; live.pending = null; onLiveSnap(p); }
-      if (live.again) { live.again = false; schedulePush(100); }
-    }
-  }
-  function maybeHistory(res, note) {
-    const now = Date.now();
-    if (!note && now - live.lastHistory < 10 * 60 * 1000) return;
-    live.lastHistory = now;
-    live.backend.addHistory({ data: res.data, rev: res.rev, name: editorName(), note: note || '자동 기록' }).catch(() => {});
-  }
-  async function snapshotNow(note) {
-    if (!live.backend || !live.base) return;
-    try { await live.backend.addHistory({ data: JSON.stringify(live.base.doc), rev: live.base.rev, name: editorName(), note }); } catch (e) { /* 기록 실패는 무시 */ }
+  /* ============================================================ 시나리오 (서버 저장소) */
+  const server = { on: false, backend: null, status: 'off', err: '', list: [], byId: new Map(), featuredId: '', gotList: false, gotConfig: false, ready: false, saving: false };
+  const visibleList = () => server.list.filter((s) => !s.deleted);
+  const srvUid = () => (server.backend ? server.backend.uid() : null);
+  const workSrc = () => (store.work && store.work.src) || null;
+  function isDirty() { const w = store.work; return !!w && !state.shared && canon(state.doc) !== w.savedStr; }
+  function currentName() {
+    if (state.shared) return state.shared.name || '공유받은 배치';
+    const src = workSrc();
+    return src ? src.name : '새 시나리오';
   }
   function ago(ms) {
     const s = Math.max(0, (Date.now() - ms) / 1000);
+    if (!ms) return '';
     if (s < 60) return '방금';
     if (s < 3600) return Math.floor(s / 60) + '분 전';
     if (s < 86400) return Math.floor(s / 3600) + '시간 전';
     return Math.floor(s / 86400) + '일 전';
   }
   const fmtTime = (ms) => new Date(ms).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  function setLiveStatus(st) { live.status = st; renderLiveBadge(); }
-  function renderLiveBadge() {
+  const countCache = new Map();
+  function docCounts(key, docOrData) {
+    if (countCache.has(key)) return countCache.get(key);
+    let desks = 0, named = 0;
+    try {
+      const d = typeof docOrData === 'string' ? JSON.parse(docOrData) : docOrData;
+      d.items.forEach((it) => { if (S.def(it.type).seat) { desks++; if (it.name) named++; } });
+    } catch (e) { /* ignore */ }
+    const r = { desks, named };
+    countCache.set(key, r);
+    return r;
+  }
+
+  function updateDirtyUI() {
+    const dirty = isDirty(), src = workSrc();
+    let t;
+    if (state.shared) t = '공유 링크 보는 중';
+    else if (dirty) t = src ? '저장 안 된 변경' : '저장 전';
+    else if (!src) t = '저장 전';
+    else t = src.kind === 'server' ? '서버에 저장됨' : '이 브라우저에 저장됨';
+    setSaveText(t, dirty);
+    const dot = $('#dirtyDot'); if (dot) dot.hidden = !dirty;
+    const sb = $('#saveBtn'); if (sb) sb.classList.toggle('attn', dirty || (!src && !state.shared));
+  }
+  function renderScnButton() {
+    const src = workSrc();
+    $('#scnName').textContent = currentName();
+    const au = $('#scnAuthor');
+    const a = state.shared ? '' : (src && src.author) || '';
+    au.textContent = a; au.hidden = !a;
+    $('#scnStar').hidden = !(src && src.kind === 'server' && src.id === server.featuredId && !state.shared);
+    updateDirtyUI();
+  }
+  function setServerStatus(st) { server.status = st; renderServerBadge(); }
+  function renderServerBadge() {
     const b = $('#liveBadge');
     if (!b) return;
-    b.hidden = !live.on || !!state.shared;
-    b.className = 'live-badge ' + live.status + (isLive() ? '' : ' muted');
-    b.querySelector('span').textContent = { connecting: '연결 중', live: '실시간', offline: '오프라인', error: '연결 오류', off: '' }[live.status] || '';
-    const m = live.meta;
-    b.title = live.status === 'live'
-      ? `공용 배치 · 실시간 연결됨${m && m.updatedAt ? `\n마지막 수정: ${ago(m.updatedAt)} · ${m.name || '익명'}` : ''}\n클릭: 버전 기록 · 복원`
-      : live.status === 'connecting' ? '서버에 연결하는 중…' : `실시간 연결 안 됨 — 변경 내용은 이 브라우저에 보관했다가 연결되면 반영돼요${live.err ? `\n(${live.err})` : ''}`;
+    b.hidden = !server.on;
+    b.className = 'live-badge ' + ({ online: 'live', connecting: 'connecting', offline: 'offline' }[server.status] || 'connecting');
+    b.querySelector('span').textContent = { online: '서버 연결', connecting: '연결 중', offline: '오프라인' }[server.status] || '';
+    b.title = server.status === 'online'
+      ? `시나리오 서버에 연결됨 · 저장된 시나리오 ${visibleList().length}개\n클릭: 시나리오 목록`
+      : server.status === 'connecting' ? '서버에 연결하는 중…' : `서버에 연결할 수 없어요 — 저장은 이 브라우저에만 돼요${server.err ? `\n(${server.err})` : ''}`;
   }
-  function setLiveSaveText() {
-    if (!isLive()) return;
-    if (live.status !== 'live') { setSaveText('오프라인 · 보관 중', true); return; }
-    setSaveText(liveDirty() ? '동기화 대기' : '실시간 저장됨', liveDirty());
+
+  async function connectServer(mock) {
+    server.on = true;
+    setServerStatus('connecting');
+    const ready = () => { if (!server.ready && server.gotList && server.gotConfig) { server.ready = true; initialOpen(); } };
+    try {
+      server.backend = mock ? window.LiveSync.memory() : await window.LiveSync.firebase(window.FIREBASE_CONFIG);
+      server.backend.listen((list) => {
+        server.list = list; server.byId = new Map(list.map((s) => [s.id, s]));
+        server.gotList = true;
+        setServerStatus('online');
+        if (server.ready) checkCurrentRemote(); else ready();
+        renderScnButton();
+        if (listIsOpen()) renderScenarioList();
+      }, onServerError);
+      server.backend.watchConfig((c) => {
+        server.featuredId = (c && c.featuredId) || '';
+        server.gotConfig = true;
+        ready();
+        renderScnButton();
+        if (listIsOpen()) renderScenarioList();
+      }, () => { server.gotConfig = true; ready(); });
+    } catch (e) { onServerError(e); }
+    setTimeout(() => { if (!server.ready) { server.ready = true; initialOpen(); } }, 7000);
   }
-  function askEditorName() {
-    return askText('편집자 이름', store.editorName || '', '예: 댄 — 공용 배치 수정 기록에 표시돼요', '확인').then((n) => {
-      if (n) { store.editorName = n.slice(0, 30); persist(); }
-      else if (!store.editorName) { store.editorName = '익명'; persist(); }
+  function onServerError(e) {
+    server.err = (e && e.message) || String(e);
+    setServerStatus('offline');
+    if (!server.ready) { server.ready = true; initialOpen(); }
+  }
+  /** 처음 열 때: 저장 안 한 작업 → 링크(#sc=) → 마지막으로 본 시나리오 → 대표 시나리오 → 최근 저장 순 */
+  function initialOpen() {
+    const link = state.linkScenarioId;
+    if (isDirty()) {
+      state.restoredWork = true;
+      if (link && !(workSrc() && workSrc().id === link)) state.pendingLink = link;
+      renderBanner(); renderScnButton();
+      return;
+    }
+    const pick = (id) => { const s = id && server.byId.get(id); return s && !s.deleted ? s : null; };
+    const src = workSrc();
+    const target = pick(link) || (src && src.kind === 'server' ? pick(src.id) : null) || pick(server.featuredId) || visibleList()[0] || null;
+    if (target) openScenario(target, { silent: true, keepSel: true });
+    else renderScnButton();
+  }
+  /** 지금 열려 있는 시나리오를 다른 사람이 저장했을 때 */
+  function checkCurrentRemote() {
+    if (server.saving || state.shared) return;
+    const src = workSrc();
+    if (!src || src.kind !== 'server') return;
+    const sc = server.byId.get(src.id);
+    if (!sc || sc.rev <= src.rev) return;
+    if (sc.deleted) { state.remoteDeleted = sc; src.rev = sc.rev; persist(); renderBanner(); return; }
+    let sameData = false;
+    try { sameData = canon(normalizeDoc(JSON.parse(sc.data))) === store.work.savedStr; } catch (e) { /* ignore */ }
+    if (sameData) { // 이름 · 작성자만 바뀜
+      Object.assign(src, { name: sc.name, author: sc.author, rev: sc.rev });
+      persist(); renderScnButton();
+      return;
+    }
+    if (!isDirty()) {
+      const mine = sc.by && sc.by === srvUid();
+      openScenario(sc, { silent: true, keepSel: true });
+      if (!mine) toast(`${sc.author || '누군가'} 님이 '${sc.name}' 시나리오를 새로 저장했어요`, { icon: 'users', ms: 2800 });
+    } else { state.remoteNewer = sc; renderBanner(); }
+  }
+  function resetWorkState(opts) {
+    state.shared = null;
+    state.remoteNewer = null; state.remoteDeleted = null; state.restoredWork = false;
+    hist.undo = []; hist.redo = []; hist.pending = null;
+    if (!(opts && opts.keepSel)) { state.sel.clear(); state.selRoom = null; }
+    state.highlight = null;
+    persist(); renderAll(); renderBanner(); renderScnButton();
+  }
+  function openScenario(sc, opts) {
+    opts = opts || {};
+    let doc;
+    try { doc = normalizeDoc(sc.doc && typeof sc.doc === 'object' ? sc.doc : JSON.parse(sc.data)); } catch (e) { toast('시나리오를 읽지 못했어요', { err: true, icon: 'alert' }); return false; }
+    store.work = { doc, src: { kind: sc.kind || 'server', id: sc.id, name: sc.name, author: sc.author || '', rev: sc.rev || 0 }, savedStr: canon(doc) };
+    state.doc = doc;
+    resetWorkState(opts);
+    if (!opts.silent) toast(`'${sc.name}' 시나리오를 열었어요`, { icon: 'folder', ms: 1800 });
+    return true;
+  }
+  function startNew(doc, suggest) {
+    store.work = { doc, src: null, savedStr: canon(doc), suggest: suggest || '' };
+    state.doc = doc;
+    resetWorkState();
+  }
+  /** 저장하지 않은 변경이 있으면 확인 → true: 계속 진행 */
+  function confirmDiscard(what) {
+    if (!isDirty()) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let done = false, acting = false;
+      const fin = (v) => { if (!done) { done = true; resolve(v); } };
+      modal({
+        title: '저장하지 않은 변경이 있어요',
+        body: `<p>'${esc(currentName())}'에서 바꾼 내용을 저장하지 않으면 ${esc(what)} 사라져요.</p>`,
+        actions: [
+          { label: '취소', kind: 'soft' },
+          { label: '저장하지 않고 계속', kind: 'soft', fn: () => { acting = true; fin(true); } },
+          { label: '먼저 저장하기', kind: 'primary', icon: 'save', fn: () => { acting = true; setTimeout(() => openSaveDialog().then((ok) => fin(!!ok)), 0); } },
+        ],
+        onClose: () => { if (!acting) fin(false); },
+      });
     });
   }
 
-  async function openHistory() {
-    if (!live.backend) { toast('실시간 서버에 연결되어 있지 않아요', { icon: 'alert', err: true }); return; }
+  /* ---------------------------------------------------------- 저장하기 */
+  function openSaveDialog(opts) {
+    opts = opts || {};
+    return new Promise((resolve) => {
+      let done = false, acting = false;
+      const fin = (v) => { if (!done) { done = true; resolve(v); } };
+      const src = workSrc();
+      const online = server.on && server.status === 'online' && !!server.backend;
+      const srvSc = src && src.kind === 'server' ? server.byId.get(src.id) : null;
+      const canOver = !opts.asNew && src && ((src.kind === 'server' && online && srvSc && !srvSc.deleted) || (src.kind === 'local' && !!store.scenarios[src.id]));
+      const newer = srvSc && srvSc.rev > src.rev ? srvSc : null;
+      const defName = opts.asNew ? (src ? src.name + ' (사본)' : '') : src ? src.name : (store.work && store.work.suggest) || '';
+      const defAuthor = store.authorName || (src && src.author) || '';
+      modal({
+        title: '시나리오 저장',
+        body: `<label class="fld"><span>시나리오 이름</span><input class="inp" id="svName" maxlength="40" value="${esc(defName)}" placeholder="예: 1안 · 6인실 B 회의실"></label>
+          <label class="fld"><span>작성자</span><input class="inp" id="svAuthor" maxlength="30" value="${esc(defAuthor)}" placeholder="예: 댄"></label>
+          ${canOver ? `<div class="fld"><span>저장 방식</span><div class="sv-modes">
+            <label class="sv-mode"><input type="radio" name="svMode" value="over" checked><span><b>'${esc(src.name)}'에 덮어쓰기</b><small>${src.kind === 'server' ? '이전 내용은 버전 기록에 남아요' : '이 브라우저의 시나리오를 갱신해요'}</small></span></label>
+            <label class="sv-mode"><input type="radio" name="svMode" value="new"><span><b>새 시나리오로 저장</b><small>원래 시나리오는 그대로 둬요</small></span></label></div></div>` : ''}
+          ${newer ? `<div class="note-box warn" style="margin-bottom:10px">그 사이 ${esc(newer.author || '누군가')} 님이 이 시나리오를 저장했어요 (${ago(newer.updatedAt)}). 덮어쓰면 그 내용은 버전 기록에서만 볼 수 있어요.</div>` : ''}
+          ${online ? '<p class="hint">저장하면 링크를 가진 모든 사람이 시나리오 목록에서 불러와 볼 수 있어요.</p>' : `<div class="note-box warn">${server.on ? '서버에 연결할 수 없어 이 브라우저에만 저장돼요. 연결되면 다시 저장해 공유하세요.' : '이 브라우저에만 저장돼요.'}</div>`}`,
+        actions: [{ label: '취소', kind: 'soft' }, { label: '저장', kind: 'primary', icon: 'save', fn: () => { submit(); return false; } }],
+        onOpen: (root) => {
+          const n = $('#svName', root); n.focus(); n.select();
+          root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('input.inp')) { e.preventDefault(); submit(); } });
+        },
+        onClose: () => { if (!acting) fin(false); },
+      });
+      async function submit() {
+        if (acting) return;
+        const name = ($('#svName').value || '').trim(), author = ($('#svAuthor').value || '').trim();
+        if (!name) { $('#svName').focus(); toast('시나리오 이름을 입력해 주세요', { icon: 'info' }); return; }
+        const mode = document.querySelector('input[name="svMode"]:checked');
+        acting = true;
+        closeModal();
+        fin(await doSave({ name: name.slice(0, 40), author: author.slice(0, 30), asNew: !canOver || (mode && mode.value === 'new') }));
+      }
+    });
+  }
+  async function doSave(a) {
+    if (hist.pending !== null) end();
+    const doc = cloneDoc(state.doc), docStr = canon(doc), data = JSON.stringify(doc);
+    store.authorName = a.author; persist();
+    const src = workSrc();
+    const online = server.on && server.status === 'online' && !!server.backend;
+    if (!online) {
+      let id = !a.asNew && src && src.kind === 'local' && store.scenarios[src.id] ? src.id : null;
+      if (id) Object.assign(store.scenarios[id], { name: a.name, author: a.author, doc, updated: Date.now() });
+      else id = newLocalScenario(a.name, a.author, doc);
+      store.work.src = { kind: 'local', id, name: a.name, author: a.author, rev: 0 }; store.work.savedStr = docStr;
+      persist(); renderScnButton(); renderBanner();
+      toast(`'${a.name}' 이 브라우저에 저장했어요`, { icon: 'save' });
+      return true;
+    }
+    server.saving = true;
+    try {
+      let id, rev;
+      if (a.asNew || !src || src.kind !== 'server') {
+        const r = await server.backend.create({ name: a.name, author: a.author, data });
+        id = r.id; rev = r.rev;
+        if (!server.featuredId || !server.byId.has(server.featuredId)) server.backend.setFeatured(id).catch(() => {});
+      } else {
+        id = src.id;
+        rev = (await server.backend.update(id, { name: a.name, author: a.author, data, note: '덮어쓰기 전 버전' }, a.force ? null : src.rev)).rev;
+      }
+      store.work.src = { kind: 'server', id, name: a.name, author: a.author, rev };
+      store.work.savedStr = docStr;
+      state.remoteNewer = null; state.remoteDeleted = null; state.restoredWork = false;
+      persist(); renderScnButton(); renderBanner();
+      toast(`'${a.name}' 저장 완료 · 누구나 시나리오 목록에서 볼 수 있어요`, { icon: 'save', ms: 3200 });
+      return true;
+    } catch (e) {
+      if (e && e.code === 'CONFLICT') { server.saving = false; return resolveConflict(e.current || {}, a); }
+      toast('저장하지 못했어요: ' + ((e && e.message) || e), { err: true, icon: 'alert', ms: 5000 });
+      return false;
+    } finally {
+      server.saving = false;
+      checkCurrentRemote();
+    }
+  }
+  function resolveConflict(cur, a) {
+    return new Promise((resolve) => {
+      let done = false, acting = false;
+      const fin = (v) => { if (!done) { done = true; resolve(v); } };
+      modal({
+        title: '다른 사람이 먼저 저장했어요',
+        body: `<p>${esc(cur.author || '누군가')} 님이 ${ago(cur.updatedAt) || '방금'} '${esc(a.name)}' 시나리오를 저장했어요. 어떻게 할까요?</p><p class="hint">덮어써도 상대방이 저장한 내용은 버전 기록에서 다시 열 수 있어요.</p>`,
+        actions: [
+          { label: '취소', kind: 'soft' },
+          { label: '그래도 덮어쓰기', kind: 'soft', fn: () => { acting = true; doSave(Object.assign({}, a, { force: true })).then(fin); } },
+          { label: '새 시나리오로 저장', kind: 'primary', fn: () => { acting = true; doSave(Object.assign({}, a, { asNew: true, name: a.name + ' (내 버전)' })).then(fin); } },
+        ],
+        onClose: () => { if (!acting) fin(false); },
+      });
+    });
+  }
+
+  /* ---------------------------------------------------------- 시나리오 목록 */
+  const listState = { q: '', showDeleted: false };
+  const listIsOpen = () => !!document.getElementById('scnList');
+  function openScenarioList() {
     modal({
-      title: '공용 배치 · 버전 기록',
-      body: `<p>편집 중 10분마다, 그리고 복원·반영 직전에 자동으로 기록돼요. 기록은 지울 수 없어서 실수로 바뀐 배치도 언제든 되돌릴 수 있어요.</p>
-        ${live.meta && live.meta.updatedAt ? `<div class="note-box" style="margin-bottom:10px">현재: ${fmtTime(live.meta.updatedAt)} · ${esc(live.meta.name || '익명')} 수정 (버전 ${live.meta.rev})</div>` : ''}
-        <div id="histList" class="hist-list"><div class="pl-empty">불러오는 중…</div></div>`,
-      actions: [{ label: '지금 버전 기록', kind: 'soft', icon: 'pin', fn: () => { snapshotNow('수동 기록').then(() => toast('현재 공용 배치를 기록했어요', { icon: 'pin' })); } }, { label: '닫기', kind: 'primary' }],
+      title: '시나리오',
+      body: `<div class="scn-tools"><div class="field-search"><i data-icon="search">${svgIcon('search')}</i><input type="search" id="scnSearch" placeholder="이름 · 작성자 검색" value="${esc(listState.q)}"></div><button class="btn primary" id="scnNew">${ic('plus')}새 시나리오</button></div>
+        <div class="hint" id="scnStatus" style="margin:10px 2px 6px"></div><div id="scnList" class="scn-list"></div>`,
+      onOpen: (root) => {
+        $('#scnSearch', root).addEventListener('input', (e) => { listState.q = e.target.value; renderScenarioList(); });
+        $('#scnNew', root).onclick = async () => {
+          closeModal();
+          if (!(await confirmDiscard('새 시나리오를 시작하면'))) return;
+          startNew(baseDoc());
+          setMode('edit');
+          toast('기본 배치에서 새 시나리오를 시작했어요 · 다 되면 [저장하기]', { icon: 'plus', ms: 3000 });
+        };
+        $('#scnList', root).addEventListener('click', onListClick);
+      },
+    });
+    renderScenarioList();
+  }
+  function scRow(s, kind, cur) {
+    const isCur = cur && cur.id === s.id && !state.shared;
+    const c = docCounts(s.id + ':' + (s.rev || s.updated || 0), s.data || s.doc);
+    const star = kind === 'server' && s.id === server.featuredId ? `<span class="star" title="대표 시나리오 — 사이트를 처음 열면 이 시나리오가 보여요">${svgIcon('star')}</span>` : '';
+    const when = kind === 'local' ? '이 브라우저' : `${ago(s.updatedAt)} 저장`;
+    return `<div class="scn-row${isCur ? ' cur' : ''}" data-sid="${esc(s.id)}" data-kind="${kind}">
+      <div class="scn-main"><div class="scn-title">${star}<b>${esc(s.name)}</b>${isCur ? `<span class="chip">${isDirty() ? '편집 중' : '보는 중'}</span>` : ''}</div>
+      <div class="scn-sub">${esc(s.author || '작성자 없음')} · ${when} · 책상 ${c.desks} · 배정 ${c.named}${kind === 'server' ? ` · v${s.rev}` : ''}</div></div>
+      ${kind === 'deleted' ? '<button class="btn soft sm" data-sa="restore">복원</button>' : `<button class="btn soft sm" data-sa="open">${isCur ? '다시 열기' : '열기'}</button><button class="btn icon flat" data-sa="more" title="더보기">${svgIcon('more')}</button>`}
+    </div>`;
+  }
+  function renderScenarioList() {
+    const el = $('#scnList');
+    if (!el) return;
+    const q = listState.q.trim().toLowerCase();
+    const match = (s) => !q || (s.name || '').toLowerCase().includes(q) || (s.author || '').toLowerCase().includes(q);
+    const cur = workSrc();
+    const st = $('#scnStatus');
+    if (st) st.textContent = !server.on ? '서버 없이 이 브라우저에 저장하는 모드예요.' : server.status === 'online' ? `서버에 저장된 시나리오 ${visibleList().length}개 · 누구나 열어 볼 수 있어요 · ★ 대표 시나리오는 사이트를 처음 열 때 보여요` : server.status === 'connecting' ? '서버에 연결하는 중…' : '서버에 연결할 수 없어요. 이 브라우저에 저장된 시나리오만 보여요.';
+    let h = '';
+    if (server.on) {
+      const srv = visibleList().filter(match).sort((a, b) => (b.id === server.featuredId) - (a.id === server.featuredId) || b.updatedAt - a.updatedAt);
+      if (!srv.length) h += `<div class="pl-empty">${server.status === 'online' ? (q ? '검색 결과가 없어요' : '아직 저장된 시나리오가 없어요.<br>편집한 뒤 [저장하기]를 누르면 여기에 나타나요.') : '불러오는 중…'}</div>`;
+      srv.forEach((s) => { h += scRow(s, 'server', cur); });
+    }
+    const locals = Object.values(store.scenarios).filter(match).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+    if (locals.length) {
+      h += `<div class="pl-room"><span>${server.on ? '이 브라우저에만 있는 시나리오 — 열어서 저장하면 공유돼요' : '저장된 시나리오'}</span><span>${locals.length}</span></div>`;
+      locals.forEach((s) => { h += scRow(s, 'local', cur); });
+    }
+    const dels = server.list.filter((s) => s.deleted && match(s));
+    if (dels.length) {
+      h += `<button class="btn ghost sm" id="scnShowDel" style="margin-top:6px">${listState.showDeleted ? '삭제된 시나리오 숨기기' : `삭제된 시나리오 ${dels.length}개 보기`}</button>`;
+      if (listState.showDeleted) dels.forEach((s) => { h += scRow(s, 'deleted', cur); });
+    }
+    el.innerHTML = h;
+  }
+  function findSc(kind, id) {
+    if (kind === 'local') { const s = store.scenarios[id]; return s ? { kind: 'local', id: s.id, name: s.name, author: s.author, rev: 0, doc: s.doc } : null; }
+    return server.byId.get(id) || null;
+  }
+  async function onListClick(e) {
+    if (e.target.closest('#scnShowDel')) { listState.showDeleted = !listState.showDeleted; renderScenarioList(); return; }
+    const btn = e.target.closest('[data-sa]');
+    const row = e.target.closest('.scn-row');
+    if (!row) return;
+    const kind = row.dataset.kind, id = row.dataset.sid, sc = findSc(kind, id);
+    if (!sc) return;
+    const act = btn ? btn.dataset.sa : 'open';
+    if (act === 'restore') { await serverUpdate(id, { deleted: false, note: '삭제 취소 전' }, `'${sc.name}' 시나리오를 복원했어요`); return; }
+    if (act === 'more') { openScenarioMenu(btn, kind, sc); return; }
+    closeModal();
+    if (!(await confirmDiscard('다른 시나리오를 열면'))) return;
+    openScenario(sc);
+  }
+  function openScenarioMenu(btn, kind, sc) {
+    const r = btn.getBoundingClientRect();
+    const entries = [];
+    if (kind === 'server') {
+      if (sc.id !== server.featuredId) entries.push({ label: '대표 시나리오로 지정', icon: 'star', fn: async () => { try { await server.backend.setFeatured(sc.id); toast(`'${sc.name}'을(를) 대표 시나리오로 지정했어요`, { icon: 'star' }); } catch (e) { toast('지정하지 못했어요: ' + e.message, { err: true, icon: 'alert' }); } } });
+      entries.push({ label: '이름 · 작성자 변경', icon: 'edit', fn: () => renameScenario(sc) });
+      entries.push({ label: '버전 기록', icon: 'rotccw', fn: () => openVersions(sc) });
+      entries.push({ label: '사본으로 열기', icon: 'copy', fn: async () => { closeModal(); if (await confirmDiscard('사본을 열면')) { let d; try { d = normalizeDoc(JSON.parse(sc.data)); } catch (er) { return; } startNew(d, sc.name + ' (사본)'); setMode('edit'); toast('사본을 열었어요 · [저장하기]로 새 시나리오로 저장하세요', { icon: 'copy' }); } } });
+      entries.push('-');
+      entries.push({ label: '삭제', icon: 'trash', danger: true, fn: async () => { if (await confirmBox('시나리오 삭제', `'${esc(sc.name)}' 시나리오를 목록에서 삭제할까요?<br>목록 아래 '삭제된 시나리오'에서 다시 복원할 수 있어요.`, '삭제', true)) serverUpdate(sc.id, { deleted: true, note: '삭제 전' }, `'${sc.name}'을(를) 삭제했어요`); } });
+    } else {
+      entries.push({ label: '이름 변경', icon: 'edit', fn: async () => { const n = await askText('이름 변경', sc.name); if (n) { store.scenarios[sc.id].name = n; const src = workSrc(); if (src && src.id === sc.id) src.name = n; persist(); renderScnButton(); if (listIsOpen()) renderScenarioList(); } } });
+      entries.push({ label: '이 브라우저에서 삭제', icon: 'trash', danger: true, fn: async () => { if (await confirmBox('시나리오 삭제', `'${esc(sc.name)}'을(를) 이 브라우저에서 삭제할까요? 되돌릴 수 없어요.`, '삭제', true)) { delete store.scenarios[sc.id]; const src = workSrc(); if (src && src.id === sc.id) store.work.src = null; persist(); renderScnButton(); } } });
+    }
+    openMenu(r.left - 150, r.bottom + 4, entries);
+  }
+  async function serverUpdate(id, patch, okMsg) {
+    if (!server.backend) return false;
+    try { await server.backend.update(id, patch, null); if (okMsg) toast(okMsg, { icon: 'check' }); return true; }
+    catch (e) { toast('서버에 반영하지 못했어요: ' + ((e && e.message) || e), { err: true, icon: 'alert' }); return false; }
+  }
+  function renameScenario(sc) {
+    modal({
+      title: '이름 · 작성자 변경',
+      body: `<label class="fld"><span>시나리오 이름</span><input class="inp" id="rnName" maxlength="40" value="${esc(sc.name)}"></label><label class="fld"><span>작성자</span><input class="inp" id="rnAuthor" maxlength="30" value="${esc(sc.author || '')}"></label>`,
+      actions: [{ label: '취소', kind: 'soft' }, { label: '변경', kind: 'primary', fn: () => {
+        const name = ($('#rnName').value || '').trim(), author = ($('#rnAuthor').value || '').trim();
+        if (!name) return false;
+        serverUpdate(sc.id, { name: name.slice(0, 40), author: author.slice(0, 30), note: '이름 변경 전' }, '변경했어요');
+        return undefined;
+      } }],
+      onOpen: (root) => { $('#rnName', root).focus(); },
+    });
+  }
+  async function openVersions(sc) {
+    modal({
+      title: `버전 기록 · ${esc(sc.name)}`,
+      body: `<p>덮어쓰기·이름 변경·삭제 직전의 내용이 자동으로 남아요. 기록은 지울 수 없어서 언제든 예전 내용을 열어 볼 수 있어요.</p><div id="verList" class="hist-list"><div class="pl-empty">불러오는 중…</div></div>`,
     });
     let list = [];
-    try { list = await live.backend.listHistory(40); } catch (e) {
-      const el = $('#histList'); if (el) el.innerHTML = `<div class="pl-empty">기록을 불러오지 못했어요 (${esc(e.message)})</div>`;
-      return;
-    }
-    const el = $('#histList');
+    try { list = await server.backend.listHistory(sc.id, 40); } catch (e) { const el = $('#verList'); if (el) el.innerHTML = `<div class="pl-empty">기록을 불러오지 못했어요 (${esc(e.message)})</div>`; return; }
+    const el = $('#verList');
     if (!el) return;
-    el.innerHTML = list.length ? list.map((h, i) => {
-      let desks = 0, named = 0;
-      try { JSON.parse(h.data).items.forEach((it) => { if (S.def(it.type).seat) { desks++; if (it.name) named++; } }); } catch (e) { /* skip */ }
-      return `<div class="hist-row"><div class="hist-main"><b>${fmtTime(h.createdAt)}</b><small>${ago(h.createdAt)}</small><div class="hist-sub">${esc(h.name || '익명')} · ${esc(h.note || '')} · 책상 ${desks} · 배정 ${named}</div></div><button class="btn soft sm" data-restore="${i}">${ic('rotccw')}복원</button></div>`;
-    }).join('') : '<div class="pl-empty">아직 기록이 없어요. 공용 배치를 편집하면 자동으로 기록돼요.</div>';
+    const curC = docCounts(sc.id + ':' + sc.rev, sc.data);
+    let h = `<div class="hist-row"><div class="hist-main"><b>현재 버전 v${sc.rev}</b><small>${ago(sc.updatedAt)}</small><div class="hist-sub">${esc(sc.author || '')} · 책상 ${curC.desks} · 배정 ${curC.named}</div></div></div>`;
+    h += list.length ? list.map((v, i) => {
+      const c = docCounts('h:' + sc.id + ':' + v.id, v.data);
+      return `<div class="hist-row"><div class="hist-main"><b>v${v.rev} · ${esc(v.name || '')}</b><small>${fmtTime(v.savedAt)}</small><div class="hist-sub">${esc(v.author || '작성자 없음')} · ${esc(v.note || '')} · 책상 ${c.desks} · 배정 ${c.named}</div></div><button class="btn soft sm" data-ver="${i}">${ic('folder')}열기</button></div>`;
+    }).join('') : '<div class="pl-empty">아직 이전 버전이 없어요</div>';
+    el.innerHTML = h;
     el.onclick = async (e) => {
-      const b = e.target.closest('[data-restore]');
+      const b = e.target.closest('[data-ver]');
       if (!b) return;
-      const h = list[+b.dataset.restore];
+      const v = list[+b.dataset.ver];
       closeModal();
-      if (await confirmBox('이 버전으로 복원', `${fmtTime(h.createdAt)} (${esc(h.name || '익명')}) 버전으로 공용 배치를 되돌릴까요?<br>모든 사람의 화면이 바로 바뀌어요. 현재 상태도 기록에 남겨 둬요.`, '복원하기')) restoreVersion(h);
+      if (!(await confirmDiscard('예전 버전을 열면'))) return;
+      let old, curDoc;
+      try { old = normalizeDoc(JSON.parse(v.data)); curDoc = normalizeDoc(JSON.parse(sc.data)); } catch (er) { toast('기록을 읽지 못했어요', { err: true, icon: 'alert' }); return; }
+      // 현재 시나리오를 기준으로 예전 내용을 펼침 → [저장하기] 덮어쓰기 = 복원
+      store.work = { doc: old, src: { kind: 'server', id: sc.id, name: sc.name, author: sc.author || '', rev: sc.rev }, savedStr: canon(curDoc) };
+      state.doc = old;
+      resetWorkState();
+      toast(`v${v.rev} 내용을 열었어요 · [저장하기] → 덮어쓰기 하면 이 버전으로 복원돼요`, { icon: 'rotccw', ms: 4500 });
     };
-  }
-  async function restoreVersion(h) {
-    let doc;
-    try { doc = normalizeDoc(JSON.parse(h.data)); } catch (e) { toast('기록을 읽지 못했어요', { err: true, icon: 'alert' }); return; }
-    await snapshotNow('복원 전 자동 기록');
-    if (!isLive()) switchScenario(LIVE_ID);
-    mutate(() => { state.doc.items = doc.items; state.doc.rooms = doc.rooms; state.doc.teams = doc.teams; });
-    toast(`${fmtTime(h.createdAt)} 버전으로 복원했어요`, { icon: 'rotccw' });
-  }
-  async function publishDraft() {
-    const sc = store.scenarios[store.current];
-    if (!sc || !live.on) return;
-    if (!(await confirmBox('공용 배치에 반영', `'${esc(sc.name)}' 초안으로 공용 배치를 바꿀까요?<br>모든 사람의 화면이 바로 바뀌어요. 바꾸기 전 상태는 버전 기록에 남아 언제든 복원할 수 있어요.`, '반영하기'))) return;
-    await snapshotNow(`'${sc.name}' 반영 전 자동 기록`.slice(0, 80));
-    const doc = cloneDoc(sc.doc);
-    switchScenario(LIVE_ID);
-    mutate(() => { state.doc.items = doc.items; state.doc.rooms = doc.rooms; state.doc.teams = doc.teams; });
-    toast('공용 배치에 반영했어요 · 모두에게 바로 보여요', { icon: 'users' });
   }
 
   /* ============================================================ view */
@@ -795,7 +968,9 @@
     return `<g class="${cls}" data-id="${it.id}" transform="translate(${r1(it.x)} ${r1(it.y)}) rotate(${r1(it.rot || 0)})">${S.draw(it, accent)}</g>`;
   }
   function renderItems() {
-    L.items.innerHTML = state.doc.items.map(itemMarkup).join('');
+    // 책상 위 소품은 항상 가구 위에 그린다
+    const items = state.doc.items;
+    L.items.innerHTML = items.filter((i) => !isTop(i)).map(itemMarkup).join('') + items.filter(isTop).map(itemMarkup).join('');
     state.els = new Map();
     for (const el of L.items.children) state.els.set(el.getAttribute('data-id'), el);
   }
@@ -895,6 +1070,7 @@
           if (a.x1 <= b.x0 || b.x1 <= a.x0 || a.y1 <= b.y0 || b.y1 <= a.y0) continue;
           const A = items[i], B = items[j];
           if ((isChair(A) && (isSeat(B) || isTable(B))) || (isChair(B) && (isSeat(A) || isTable(A)))) continue;
+          if (isTop(A) || isTop(B)) continue; // 책상·랙 위에 올려 둔 소품
           if (obbOverlap(A, B)) { ids.add(A.id); ids.add(B.id); list.push({ kind: 'overlap', a: A.id, b: B.id }); }
         }
       }
@@ -1037,7 +1213,7 @@
   function snapTargets(exclude) {
     const xs = [], ys = [];
     state.doc.items.forEach((it) => {
-      if (exclude.has(it.id) || isFloor(it)) return;
+      if (exclude.has(it.id) || isFloor(it) || isTop(it)) return;
       const b = aabb(it);
       [b.x0, (b.x0 + b.x1) / 2, b.x1].forEach((v) => xs.push({ v, a: b.y0, b: b.y1 }));
       [b.y0, (b.y0 + b.y1) / 2, b.y1].forEach((v) => ys.push({ v, a: b.x0, b: b.x1 }));
@@ -1155,7 +1331,7 @@
   }
   function cancelPlacing(silent) {
     if (!state.placing) return;
-    state.placing = null; state.guides = [];
+    state.placing = null; state.guides = []; state.dists = [];
     stage.classList.remove('placing');
     $$('.cat-card.active').forEach((c) => c.classList.remove('active'));
     $('#placeHint').hidden = true;
@@ -1164,6 +1340,9 @@
   function updateGhost(wx, wy, free) {
     const pl = state.placing;
     if (!pl) return;
+    // 책상 위 소품: 책상/랙 위로 가져가면 그 방향에 맞춰 자동 회전 (R 로 직접 돌리면 유지)
+    const single = pl.parts.length === 1 ? pl.parts[0] : null;
+    if (single && isTop(single) && !pl.userRot) { const s = surfaceAt(wx, wy); pl.rot = s ? norm(s.rot || 0) : 0; }
     const lb = partsBox(pl.parts, 0);
     // 회전은 ghost 그룹 transform 으로 처리 → 박스는 회전된 상태로 계산
     const rb = partsBox(pl.parts, pl.rot);
@@ -1177,9 +1356,10 @@
       if (isArch(it) || isFloor(it)) return false;
       const r = itemRoom(it);
       if (!r || !corners(it, -1).every(([x, y]) => pointInPoly(x, y, r.poly))) return true;
+      if (isTop(it)) return false;
       const ab = aabb(it);
       return state.doc.items.some((o) => {
-        if (isFloor(o) || isArch(o)) return false;
+        if (isFloor(o) || isArch(o) || isTop(o)) return false;
         if ((isChair(it) && (isSeat(o) || isTable(o))) || (isChair(o) && (isSeat(it) || isTable(it)))) return false;
         const b = aabb(o);
         if (ab.x1 <= b.x0 || b.x1 <= ab.x0 || ab.y1 <= b.y0 || b.y1 <= ab.y0) return false;
@@ -1265,10 +1445,11 @@
       } else if (members.length > 1 && state.sel.size === members.length) {
         deep = id;
       }
-      const moving = selItems().filter((x) => !x.locked);
+      const own = selItems().filter((x) => !x.locked);
+      const moving = withAttached(own); // 책상·랙 위의 소품도 함께 이동
       drag = Object.assign(base, {
         kind: 'move', w0: [wx, wy], deep, ids: new Set(moving.map((x) => x.id)),
-        start: moving.map((x) => ({ it: x, x: x.x, y: x.y })), box0: moving.length ? unionBox(moving) : null,
+        start: moving.map((x) => ({ it: x, x: x.x, y: x.y })), box0: own.length ? unionBox(own) : null,
         lockedHit: it.locked,
       });
       return;
@@ -1290,7 +1471,8 @@
     if (h === 'rot') {
       const b = unionBox(items);
       const c = items.length === 1 ? [items[0].x, items[0].y] : [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
-      drag = Object.assign(base, { kind: 'rotate', c, a0: Math.atan2(wy - c[1], wx - c[0]), start: items.map((x) => ({ it: x, x: x.x, y: x.y, rot: x.rot || 0 })), moved: true });
+      const all = withAttached(items);
+      drag = Object.assign(base, { kind: 'rotate', c, a0: Math.atan2(wy - c[1], wx - c[0]), start: all.map((x) => ({ it: x, x: x.x, y: x.y, rot: x.rot || 0 })), moved: true });
     } else {
       const it = items[0];
       drag = Object.assign(base, { kind: 'resize', h, it, s: { x: it.x, y: it.y, w: it.w, h: it.h, rot: it.rot || 0 }, moved: true });
@@ -1453,8 +1635,6 @@
       }
       default: break;
     }
-    // 드래그 중에 도착한 다른 사람의 변경을 이제 반영
-    if (live.pending && !live.pushing) { const p = live.pending; live.pending = null; onLiveSnap(p); }
   }
 
   function hover(e, wx, wy) {
@@ -1513,13 +1693,15 @@
   function rotateSel(deg) {
     const items = movable();
     if (!items.length) return;
+    const selIds = new Set(items.map((i) => i.id));
     mutate(() => {
       const us = units(items);
       const whole = us.length === 1 ? [items] : us;
       whole.forEach((grp) => {
         const b = unionBox(grp), cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
-        grp.forEach((it) => {
-          if (grp.length > 1) { const [ox, oy] = rotVec(it.x - cx, it.y - cy, deg); it.x = r1(cx + ox); it.y = r1(cy + oy); }
+        const all = withAttached(grp, selIds);
+        all.forEach((it) => {
+          if (all.length > 1) { const [ox, oy] = rotVec(it.x - cx, it.y - cy, deg); it.x = r1(cx + ox); it.y = r1(cy + oy); }
           it.rot = norm((it.rot || 0) + deg);
         });
       });
@@ -1528,7 +1710,8 @@
   function nudge(dx, dy) {
     const items = movable();
     if (!items.length) return;
-    mutate(() => items.forEach((it) => { it.x = r1(it.x + dx); it.y = r1(it.y + dy); }), 'nudge');
+    const all = withAttached(items);
+    mutate(() => all.forEach((it) => { it.x = r1(it.x + dx); it.y = r1(it.y + dy); }), 'nudge');
   }
   function cloneItems(items, dx, dy) {
     const gmap = new Map();
@@ -1541,7 +1724,7 @@
     });
   }
   function duplicateSel() {
-    const items = selItems().filter((i) => !isArch(i) || !i.locked);
+    const items = withAttached(selItems().filter((i) => !isArch(i) || !i.locked));
     if (!items.length) return;
     const b = unionBox(items);
     const off = Math.min(40, (b.x1 - b.x0) * 0.25 + 15);
@@ -1551,7 +1734,7 @@
     toast(`${clones.length}개 복제됨`, { icon: 'copy', ms: 1400 });
   }
   function copySel() {
-    const items = selItems();
+    const items = withAttached(selItems());
     if (!items.length) return;
     state.clipboard = JSON.parse(JSON.stringify(items));
     toast(`${items.length}개 복사됨 · Ctrl+V 로 붙여넣기`, { icon: 'copy', ms: 1500 });
@@ -1568,8 +1751,9 @@
   function deleteSel() {
     const items = selItems();
     if (!items.length) return;
-    const del = items.filter((i) => !i.locked);
-    if (!del.length) { toast('잠긴 아이템은 잠금 해제 후 삭제할 수 있어요', { icon: 'lock' }); return; }
+    const own = items.filter((i) => !i.locked);
+    if (!own.length) { toast('잠긴 아이템은 잠금 해제 후 삭제할 수 있어요', { icon: 'lock' }); return; }
+    const del = withAttached(own); // 책상을 지우면 그 위 소품도 함께
     const ids = new Set(del.map((i) => i.id));
     mutate(() => { state.doc.items = state.doc.items.filter((i) => !ids.has(i.id)); });
     state.sel.clear(); onSelectionChange();
@@ -1671,6 +1855,7 @@
     renderLabels(); renderRoomLabels(); renderUI();
     renderInspector(); renderPeople(); renderTeams(); renderLegend();
     $('#undoBtn').disabled = !hist.undo.length; $('#redoBtn').disabled = !hist.redo.length;
+    if (store.work) updateDirtyUI();
   }
   function lightRefresh() {
     computeStats(); renderLabels(); renderRoomLabels(); renderPeople(); renderTeams(); renderLegend();
@@ -1818,15 +2003,14 @@
       });
       s += '</div></div>';
     }
-    if (isLive()) {
-      const m = live.meta;
-      s += `<div class="sec"><div class="note-box ${state.mode === 'edit' ? 'warn' : 'tip'}"><b>${state.mode === 'edit' ? '공용 배치를 편집 중이에요' : '공용 배치 · 실시간'}</b><br>${state.mode === 'edit' ? '바꾸는 내용이 링크를 연 모든 사람에게 바로 보여요. 혼자 실험하려면 상단 메뉴에서 <b>새 초안</b>을 만드세요.' : '누군가 편집하면 이 화면에도 바로 반영돼요.'}${m && m.updatedAt ? `<br><span style="opacity:.8">마지막 수정: ${ago(m.updatedAt)} · ${esc(m.name || '익명')}</span>` : ''}</div></div>`;
-    } else if (live.on && !state.shared) {
-      s += `<div class="sec"><div class="note-box">지금은 <b>내 초안</b>이라 이 브라우저에만 저장돼요. 완성되면 상단 메뉴의 <b>이 초안을 공용 배치에 반영</b>으로 모두에게 공유하세요.</div></div>`;
+    const src = workSrc();
+    if (!state.shared) {
+      const scInfo = src ? `<br><span style="opacity:.85">지금 보는 시나리오: <b>'${esc(src.name)}'</b>${src.author ? ` · ${esc(src.author)}` : ''}${src.kind === 'server' && server.byId.get(src.id) ? ` · ${ago(server.byId.get(src.id).updatedAt)} 저장` : ''}</span>` : '';
+      s += `<div class="sec"><div class="note-box ${isDirty() ? 'warn' : 'tip'}"><b>${isDirty() ? '저장하지 않은 변경이 있어요' : '시나리오'}</b><br>${server.on ? '편집한 배치는 <b>[저장하기]</b>로 이름·작성자를 붙여 서버에 저장하고, 상단 시나리오 버튼에서 누구나 여러 안을 불러와 볼 수 있어요.' : '편집한 배치는 <b>[저장하기]</b>로 이름·작성자를 붙여 이 브라우저에 저장해요.'}${scInfo}</div></div>`;
     }
     s += state.mode === 'edit'
-      ? `<div class="sec"><div class="note-box tip"><b>건축 모드 팁</b><br>왼쪽 아이템을 끌어다 놓아 배치하고, 선택 후 <kbd>R</kbd> 회전 · <kbd>Ctrl</kbd>+<kbd>D</kbd> 복제 · <kbd>Del</kbd> 삭제. 빈 공간(6인실 등)을 클릭하면 <b>프리셋</b>으로 한 번에 꾸밀 수 있어요.</div></div>`
-      : `<div class="sec"><div class="note-box">상단 검색창에 이름을 입력하면 자리를 찾아 줘요. 배치를 바꿔 보려면 <b>편집</b> 모드로 전환하세요${live.on ? '' : ' — 내 브라우저에만 저장되고, <b>공유</b> 버튼으로 링크를 만들 수 있어요'}.</div></div>`;
+      ? `<div class="sec"><div class="note-box tip"><b>건축 모드 팁</b><br>왼쪽 아이템을 끌어다 놓아 배치하고, 선택 후 <kbd>R</kbd> 회전 · <kbd>Ctrl</kbd>+<kbd>D</kbd> 복제 · <kbd>Del</kbd> 삭제. 모니터·서류·박스 같은 <b>책상 위 소품</b>은 책상·랙 위에 올려두면 함께 움직여요. 빈 공간을 클릭하면 <b>프리셋</b>으로 한 번에 꾸밀 수 있어요.</div></div>`
+      : '<div class="sec"><div class="note-box">상단 검색창에 이름을 입력하면 자리를 찾아 줘요. 배치를 바꿔 보려면 <b>편집</b> 모드로 전환하세요.</div></div>';
     return s;
   }
 
@@ -2320,11 +2504,12 @@
       ['복제', 'Ctrl+D'], ['복사 / 붙여넣기', 'Ctrl+C / V'], ['삭제', 'Delete'], ['실행 취소 / 다시', 'Ctrl+Z / Ctrl+Shift+Z'],
       ['그룹 / 해제', 'Ctrl+G / Ctrl+Shift+G'], ['잠금', 'L'], ['이름 지정', 'F2 · 더블클릭'], ['거리 측정', 'M'],
       ['스냅 없이 이동', 'Alt+드래그'], ['자리 찾기', '/'],
+      ['저장하기', 'Ctrl+S'], ['다른 이름으로 저장', 'Ctrl+Shift+S'], ['시나리오 목록', 'Ctrl+O'],
     ];
     modal({
       title: '단축키 · 사용법', wide: false,
       body: `<div class="help-grid">${rows.map(([a, b]) => `<div><span>${a}</span><span>${b.split(' · ').map((k) => `<kbd>${esc(k)}</kbd>`).join(' ')}</span></div>`).join('')}</div>
-        <div class="note-box tip" style="margin-top:14px">저장은 이 브라우저에 자동으로 돼요. 다른 사람에게 보여주려면 <b>공유</b> → 링크 복사. 모두가 보는 기본 배치를 바꾸려면 <b>공유 → layout.json 내보내기</b> 후 GitHub 저장소에 올리세요.</div>`,
+        <div class="note-box tip" style="margin-top:14px">편집 중인 내용은 이 브라우저에 임시 보관돼요. <b>[저장하기]</b>로 시나리오 이름·작성자를 정해 저장하면 링크를 가진 모두가 <b>시나리오 목록</b>에서 불러와 볼 수 있어요. 모니터·서류·박스 같은 소품은 책상·랙 위에 올려 두면 함께 움직여요.</div>`,
     });
   }
 
@@ -2388,34 +2573,27 @@
     return unpackDoc(JSON.parse(new TextDecoder().decode(bytes)));
   }
   function shareBase() { return location.href.split('#')[0].split('?')[0]; }
-  function currentName() {
-    if (state.shared) return state.shared.name;
-    if (store.current === LIVE_ID) return '공용 배치 (실시간)';
-    return (store.scenarios[store.current] || {}).name || '배치안';
-  }
-
   async function openShare() {
     const code = await encodeShare(state.doc, currentName());
-    const url = shareBase() + '#s=' + code;
+    const snapUrl = shareBase() + '#s=' + code;
     const site = shareBase();
+    const src = workSrc();
+    const scUrl = !state.shared && src && src.kind === 'server' ? site + '#sc=' + src.id : null;
     const local = !/^https?:/.test(location.protocol);
-    const flat = ' style="padding-top:0;border:0"';
-    const liveSec = live.on
-      ? `<div class="sec"${flat}><h4>사이트 주소 · 공용 배치 (실시간)</h4><p>이 주소를 보내면 누구나 <b>항상 최신 공용 배치</b>를 보고, 누가 편집하든 모두의 화면에 바로 반영돼요.</p>
-         <div class="share-url"><input class="inp" readonly value="${esc(site)}"><button class="btn primary" data-copy="${esc(site)}">${ic('link')}복사</button></div></div>`
-      : '';
-    const snapSec = `<div class="sec"${live.on ? '' : flat}><h4>${live.on ? '지금 화면 그대로 보내기 (스냅샷 링크)' : '공유 링크'}</h4>
-        <p>${live.on ? '공용 배치와 별개로, <b>지금 보고 있는 배치</b>(초안 포함)를 그 상태 그대로 담은 링크예요.' : '아래 링크에 <b>지금 보고 있는 배치</b>가 그대로 담겨 있어요. 받는 사람이 편집해도 원본에는 영향이 없어요.'}</p>
-        <div class="share-url"><input class="inp" readonly value="${esc(url)}"><button class="btn ${live.on ? 'soft' : 'primary'}" data-copy="${esc(url)}">${ic('link')}복사</button></div>
-        <p class="hint">링크 길이 ${url.length.toLocaleString()}자 · 배치 아이템 ${state.doc.items.length}개</p></div>`;
-    const tail = live.on
-      ? `<div style="display:flex;gap:6px;margin-top:4px"><button class="btn soft" id="openHist">${ic('rotccw')}버전 기록 · 복원</button><button class="btn soft" id="dlPng">${ic('image')}PNG 이미지</button></div>`
-      : `<div class="sec"><h4>모두가 보는 기본 배치로 게시</h4><div class="note-box">회사 링크(첫 화면)에 이 배치를 띄우려면 <b>layout.json</b> 을 내려받아 GitHub 저장소 최상위에 올리면 돼요. 이후 링크를 여는 모든 사람의 기본 배치가 바뀝니다.</div>
-        <div style="display:flex;gap:6px;margin-top:10px"><button class="btn soft" id="dlLayout">${ic('download')}layout.json 내려받기</button><button class="btn soft" id="dlPng">${ic('image')}PNG 이미지</button></div></div>`;
+    const row = (val, primary) => `<div class="share-url"><input class="inp" readonly value="${esc(val)}"><button class="btn ${primary ? 'primary' : 'soft'}" data-copy="${esc(val)}">${ic('link')}복사</button></div>`;
+    let body = '';
+    if (scUrl) {
+      body += `<div class="sec" style="padding-top:0;border:0"><h4>이 시나리오 링크 · '${esc(src.name)}'</h4><p>링크를 열면 이 시나리오가 바로 열리고, 누가 다시 저장하든 <b>항상 최신 저장본</b>이 보여요.</p>${row(scUrl, true)}
+        ${isDirty() ? '<p class="hint" style="color:var(--warn)">※ 저장하지 않은 변경은 포함되지 않아요 — 먼저 [저장하기]를 눌러 주세요.</p>' : ''}</div>`;
+    }
+    if (server.on) {
+      body += `<div class="sec"${scUrl ? '' : ' style="padding-top:0;border:0"'}><h4>사이트 주소</h4><p>처음 여는 사람에게는 ★ 대표 시나리오가 보여요. 다른 시나리오는 상단 시나리오 목록에서 고를 수 있어요.</p>${row(site, !scUrl)}</div>`;
+    }
+    body += `<div class="sec"${server.on || scUrl ? '' : ' style="padding-top:0;border:0"'}><h4>지금 화면 그대로 보내기 (스냅샷)</h4><p>저장하지 않은 변경까지 <b>지금 보이는 배치</b>를 링크 하나에 담아요. 받는 사람이 고쳐도 원본은 그대로예요.</p>${row(snapUrl, !server.on && !scUrl)}<p class="hint">링크 길이 ${snapUrl.length.toLocaleString()}자 · 배치 아이템 ${state.doc.items.length}개</p></div>`;
+    if (local) body += '<div class="note-box warn" style="margin-bottom:12px">지금은 PC 파일로 열려 있어서 이 링크는 다른 사람에게 열리지 않아요. 배포된 사이트 주소에서 공유하세요 (README 참고).</div>';
+    body += `<div style="display:flex;gap:6px;margin-top:4px"><button class="btn soft" id="dlPng">${ic('image')}PNG 이미지</button>${server.on ? '' : `<button class="btn soft" id="dlLayout">${ic('download')}layout.json 내려받기</button>`}</div>`;
     modal({
-      title: '공유하기',
-      body: liveSec + snapSec +
-        (local ? `<div class="note-box warn" style="margin-bottom:12px">지금은 PC 파일로 열려 있어서 이 링크는 다른 사람에게 열리지 않아요. 배포된 사이트 주소에서 공유하세요 (README 참고).</div>` : '') + tail,
+      title: '공유하기', body,
       onOpen: (root) => {
         root.querySelectorAll('[data-copy]').forEach((btn) => {
           btn.onclick = async () => {
@@ -2427,7 +2605,6 @@
         });
         root.querySelectorAll('.share-url .inp').forEach((inp) => { inp.onclick = () => inp.select(); });
         const dl = $('#dlLayout', root); if (dl) dl.onclick = () => exportJSON(true);
-        const oh = $('#openHist', root); if (oh) oh.onclick = () => { closeModal(); openHistory(); };
         $('#dlPng', root).onclick = () => exportPNG();
       },
     });
@@ -2463,9 +2640,10 @@
       try {
         const j = JSON.parse(await f.text());
         const doc = normalizeDoc(j.doc || j);
-        const id = newScenario((j.scenario || f.name.replace(/\.json$/i, '')).slice(0, 40), doc, 'user');
-        persist(); switchScenario(id);
-        toast(`'${store.scenarios[id].name}' 불러옴 · 아이템 ${doc.items.length}개`, { icon: 'upload' });
+        if (!(await confirmDiscard('파일을 불러오면'))) return;
+        const name = (j.scenario || f.name.replace(/\.json$/i, '')).slice(0, 40);
+        startNew(doc, name);
+        toast(`'${name}' 불러옴 · 아이템 ${doc.items.length}개 · [저장하기]로 시나리오에 저장하세요`, { icon: 'upload', ms: 4000 });
       } catch (e) { toast('파일을 읽지 못했어요: ' + e.message, { err: true, icon: 'alert' }); }
     };
     inp.click();
@@ -2495,79 +2673,69 @@
     cv.toBlob((blob) => { if (blob) download(`inertia-17f_${stampName()}.png`, blob); }, 'image/png');
   }
 
-  /* ---------------------------------------------------------- scenarios */
-  function openScenarioMenu() {
-    const b = $('#scnBtn').getBoundingClientRect();
-    const entries = [];
-    const drafts = Object.values(store.scenarios).sort((a, c) => a.created - c.created);
-    if (live.on) {
-      entries.push({ head: '공용 · 모두에게 실시간 공유' });
-      entries.push({ label: '공용 배치 (실시간)', icon: isLive() ? 'check' : 'users', on: isLive(), fn: () => switchScenario(LIVE_ID) });
-      entries.push({ head: '내 초안 · 이 브라우저에만 저장' });
-      if (!drafts.length) entries.push({ label: '아직 초안이 없어요', icon: 'file', disabled: true });
-    } else entries.push({ head: '시나리오 (이 브라우저에 저장)' });
-    drafts.forEach((sc) => {
-      entries.push({ label: sc.name, icon: sc.id === store.current && !state.shared ? 'check' : 'file', on: sc.id === store.current && !state.shared, fn: () => switchScenario(sc.id) });
-    });
-    entries.push('-');
-    const word = live.on ? '초안' : '시나리오';
-    entries.push({
-      label: live.on ? '새 초안 (공용 배치에서 시작)' : '새 시나리오 (기본 배치에서)', icon: 'plus',
-      fn: async () => { const n = await askText(`새 ${word}`, `배치안 ${drafts.length + 1}`, '예: 개발팀 6인실 B안'); if (n) { const id = newScenario(n, live.on ? cloneDoc(store.live.doc) : baseDoc(), 'user'); persist(); switchScenario(id); setMode('edit'); } },
-    });
-    entries.push({ label: `현재 배치를 ${word}으로 복제`, icon: 'copy', fn: async () => { const n = await askText(`${word} 복제`, (isLive() ? '공용 배치' : currentName()) + ' (복사본)'); if (n) { const id = newScenario(n, cloneDoc(state.doc), 'user'); persist(); switchScenario(id); } } });
-    if (live.on && !isLive() && !state.shared && store.scenarios[store.current]) entries.push({ label: '이 초안을 공용 배치에 반영', icon: 'upload', fn: publishDraft });
-    if (isLive()) {
-      entries.push({ label: '버전 기록 · 복원', icon: 'rotccw', fn: openHistory });
-      entries.push({ label: '공용 배치를 기본 배치로 초기화', icon: 'trash', danger: true, fn: async () => { if (await confirmBox('공용 배치 초기화', '공용 배치를 기본 배치(36석·16석)로 되돌릴까요?<br>모든 사람의 화면이 바뀌어요. 현재 상태는 버전 기록에 남겨 둬요.', '초기화')) { await snapshotNow('초기화 전 자동 기록'); mutate(() => { const d = baseDoc(); state.doc.items = d.items; state.doc.rooms = d.rooms; }); } } });
-    }
-    if (!state.shared && !isLive() && store.scenarios[store.current]) {
-      entries.push({ label: '이름 변경', icon: 'edit', fn: async () => { const sc = store.scenarios[store.current]; const n = await askText('이름 변경', sc.name); if (n) { sc.name = n; persist(); $('#scnName').textContent = n; } } });
-      entries.push({ label: '기본 배치로 되돌리기', icon: 'rotccw', fn: async () => { if (await confirmBox('기본 배치로 되돌리기', '현재 시나리오의 모든 변경을 지우고 기본 배치(36석·16석)로 되돌릴까요?<br>실행 취소로 되살릴 수 있어요.', '되돌리기')) { mutate(() => { const d = baseDoc(); state.doc.items = d.items; state.doc.rooms = d.rooms; state.doc.teams = d.teams.length ? d.teams : state.doc.teams; }); } } });
-      if (live.on || Object.keys(store.scenarios).length > 1) {
-        entries.push({ label: `현재 ${word} 삭제`, icon: 'trash', danger: true, fn: async () => { if (await confirmBox(`${word} 삭제`, `'${esc(currentName())}' ${word}을 삭제할까요? 되돌릴 수 없어요.`, '삭제', true)) { delete store.scenarios[store.current]; const next = Object.keys(store.scenarios)[0] || LIVE_ID; persist(); switchScenario(next); } } });
-      }
-    }
-    openMenu(b.left, b.bottom + 6, entries);
-  }
+  /* ---------------------------------------------------------- menus · banner */
   function openMoreMenu() {
     const b = $('#moreBtn').getBoundingClientRect();
-    const liveItems = live.on ? [
-      { label: '공용 배치 버전 기록 · 복원', icon: 'rotccw', fn: openHistory },
-      { label: `편집자 이름: ${editorName()}`, icon: 'edit', fn: askEditorName },
+    openMenu(b.right - 250, b.bottom + 6, [
+      { label: '시나리오 목록', icon: 'folder', fn: openScenarioList },
+      { label: '다른 이름으로 저장', icon: 'save', kbd: 'Ctrl+Shift+S', fn: () => openSaveDialog({ asNew: true }) },
       '-',
-    ] : [];
-    openMenu(b.right - 250, b.bottom + 6, liveItems.concat([
       { label: 'PNG 이미지로 저장', icon: 'image', fn: exportPNG },
       { label: '배치 파일 내보내기 (.json)', icon: 'download', fn: () => exportJSON(false) },
       { label: '배치 파일 가져오기', icon: 'upload', fn: importJSON },
-      { label: '공식 배치용 layout.json', icon: 'pin', fn: () => exportJSON(true) },
       '-',
       { label: '임대차계약서 평면도 원본', icon: 'map', fn: openOrigPlan },
       { label: '현장 사진', icon: 'image', fn: () => openGallery() },
       { label: '단축키 · 사용법', icon: 'help', kbd: '?', fn: openHelp },
-    ]));
+    ]);
   }
 
   function renderBanner() {
     const b = $('#banner');
+    const show = (html, binds) => {
+      b.innerHTML = html; b.hidden = false;
+      Object.keys(binds).forEach((id) => { const el = document.getElementById(id); if (el) el.onclick = binds[id]; });
+    };
     if (state.shared) {
-      b.innerHTML = `${ic('link')}<span>공유받은 배치안${state.shared.name ? ` <b>'${esc(state.shared.name)}'</b>` : ''}을 보고 있어요${state.shared.dirty ? ' · 변경사항은 아직 저장 전' : ''}</span><button class="btn primary sm" id="bnSave">내 시나리오로 저장</button><button class="btn soft sm" id="bnClose">닫기</button>`;
-      b.hidden = false;
-      $('#bnSave').onclick = () => {
-        const id = newScenario(state.shared.name || '공유받은 배치안', state.doc, 'user');
-        history.replaceState(null, '', shareBase());
-        persist(); switchScenario(id); toast('내 시나리오로 저장했어요', { icon: 'check' });
-      };
-      $('#bnClose').onclick = () => { history.replaceState(null, '', shareBase()); switchScenario(store.current); };
-      return;
+      return show(`${ic('link')}<span>공유받은 배치${state.shared.name ? ` <b>'${esc(state.shared.name)}'</b>` : ''}를 보고 있어요</span><button class="btn primary sm" id="bnTake">가져와서 편집 · 저장</button><button class="btn soft sm" id="bnClose">닫기</button>`, {
+        bnTake: async () => {
+          const sh = state.shared;
+          state.shared = null; state.doc = store.work.doc;
+          if (!(await confirmDiscard('가져오면'))) { state.shared = sh; state.doc = sh.doc; renderAll(); return; }
+          history.replaceState(null, '', shareBase());
+          startNew(cloneDoc(sh.doc), sh.name || '');
+          setMode('edit');
+          openSaveDialog();
+        },
+        bnClose: () => { history.replaceState(null, '', shareBase()); state.shared = null; state.doc = store.work.doc; resetWorkState({ keepSel: false }); },
+      });
     }
-    if (state.officialNotice && official) {
-      b.innerHTML = `${ic('pin')}<span>새 공식 배치안이 게시되었어요</span><button class="btn primary sm" id="bnLoad">새 시나리오로 열기</button><button class="btn soft sm" id="bnLater">나중에</button>`;
-      b.hidden = false;
-      $('#bnLoad').onclick = () => { const id = newScenario(official.name || '공식 배치안', cloneDoc(official.doc), 'official', official.stamp); store.dismissed = official.stamp; state.officialNotice = false; persist(); switchScenario(id); };
-      $('#bnLater').onclick = () => { store.dismissed = official.stamp; state.officialNotice = false; persist(); renderBanner(); };
-      return;
+    if (state.remoteDeleted) {
+      const sc = state.remoteDeleted;
+      return show(`${ic('alert')}<span>'${esc(sc.name)}' 시나리오가 목록에서 삭제되었어요</span><button class="btn primary sm" id="bnSaveNew">새 시나리오로 저장</button><button class="btn soft sm" id="bnX">닫기</button>`, {
+        bnSaveNew: () => openSaveDialog({ asNew: true }), bnX: () => { state.remoteDeleted = null; renderBanner(); },
+      });
+    }
+    if (state.remoteNewer) {
+      const sc = state.remoteNewer;
+      return show(`${ic('users')}<span>${esc(sc.author || '누군가')} 님이 '${esc(sc.name)}'을(를) 새로 저장했어요 · 내 변경은 아직 저장 전</span><button class="btn primary sm" id="bnLoad">최신본 불러오기</button><button class="btn soft sm" id="bnLater">나중에</button>`, {
+        bnLoad: async () => { if (await confirmDiscard('최신본을 불러오면')) openScenario(server.byId.get(sc.id) || sc); },
+        bnLater: () => { state.remoteNewer = null; renderBanner(); },
+      });
+    }
+    if (state.pendingLink) {
+      const sc = server.byId.get(state.pendingLink);
+      if (sc && !sc.deleted) {
+        return show(`${ic('link')}<span>링크로 받은 <b>'${esc(sc.name)}'</b> 시나리오가 있어요</span><button class="btn primary sm" id="bnOpenLink">열기</button><button class="btn soft sm" id="bnX">닫기</button>`, {
+          bnOpenLink: async () => { if (await confirmDiscard('링크의 시나리오를 열면')) { state.pendingLink = null; openScenario(sc); } },
+          bnX: () => { state.pendingLink = null; renderBanner(); },
+        });
+      }
+    }
+    if (state.restoredWork && isDirty()) {
+      return show(`${ic('edit')}<span>저장하지 않은 작업을 이어서 보여 드려요${workSrc() ? ` · '${esc(workSrc().name)}'` : ''}</span><button class="btn primary sm" id="bnSave">${ic('save')}저장하기</button><button class="btn soft sm" id="bnX">닫기</button>`, {
+        bnSave: () => openSaveDialog(), bnX: () => { state.restoredWork = false; renderBanner(); },
+      });
     }
     b.hidden = true;
   }
@@ -2583,7 +2751,6 @@
     if (m !== 'edit' && state.sel.size > 1) { state.sel = new Set(); }
     store.mode = m; persist();
     renderAll();
-    if (m === 'edit' && isLive() && !store.editorName) setTimeout(askEditorName, 50);
   }
   function setTool(t) {
     state.tool = t;
@@ -2633,6 +2800,8 @@
     if (!mod && (k === '-' || k === '_')) { zoomCenter(0.8); return; }
     if (!mod && (k === 'm' || k === 'M')) { setTool(state.tool === 'measure' ? (state.mode === 'edit' ? 'select' : 'pan') : 'measure'); return; }
     if (!mod && (k === 'h' || k === 'H')) { setTool('pan'); return; }
+    if (mod && (k === 's' || k === 'S')) { e.preventDefault(); openSaveDialog(e.shiftKey ? { asNew: true } : {}); return; }
+    if (mod && (k === 'o' || k === 'O')) { e.preventDefault(); openScenarioList(); return; }
     if (state.mode !== 'edit') return;
     if (mod && (k === 'z' || k === 'Z')) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
     if (mod && (k === 'y' || k === 'Y')) { e.preventDefault(); redo(); return; }
@@ -2643,10 +2812,10 @@
     if (mod && (k === 'g' || k === 'G')) { e.preventDefault(); if (e.shiftKey) ungroupSel(); else groupSel(); return; }
     if (k === 'v' || k === 'V') { setTool('select'); return; }
     if (k === 'r' || k === 'R') {
-      if (state.placing) { state.placing.rot = norm(state.placing.rot + (e.shiftKey ? -90 : 90)); if (state.lastWorld) updateGhost(state.lastWorld[0], state.lastWorld[1], false); return; }
+      if (state.placing) { state.placing.userRot = true; state.placing.rot = norm(state.placing.rot + (e.shiftKey ? -90 : 90)); if (state.lastWorld) updateGhost(state.lastWorld[0], state.lastWorld[1], false); return; }
       rotateSel(e.shiftKey ? -90 : 90); return;
     }
-    if (k === '[' || k === ']') { if (state.placing) { state.placing.rot = norm(state.placing.rot + (k === ']' ? 15 : -15)); if (state.lastWorld) updateGhost(state.lastWorld[0], state.lastWorld[1], false); } else rotateSel(k === ']' ? 15 : -15); return; }
+    if (k === '[' || k === ']') { if (state.placing) { state.placing.userRot = true; state.placing.rot = norm(state.placing.rot + (k === ']' ? 15 : -15)); if (state.lastWorld) updateGhost(state.lastWorld[0], state.lastWorld[1], false); } else rotateSel(k === ']' ? 15 : -15); return; }
     if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); deleteSel(); return; }
     if (k === 'l' || k === 'L') { toggleLock(); return; }
     if (k === 'F2' || k === 'Enter') { if (state.sel.size) { e.preventDefault(); focusName(); } return; }
@@ -2687,12 +2856,13 @@
     $('#zoomIn').onclick = () => zoomCenter(1.25);
     $('#zoomOut').onclick = () => zoomCenter(0.8);
     $('#zoomFit').onclick = () => fit(true);
-    $('#liveBadge').onclick = () => openHistory();
+    $('#liveBadge').onclick = () => openScenarioList();
+    $('#saveBtn').onclick = () => openSaveDialog();
     $('#zoomVal').onclick = () => { const r = stageSize(), [cx, cy] = toWorld(r.left + r.w / 2, r.top + r.h / 2); animateView(1, r.w / 2 - cx, r.h / 2 - cy); };
     $('#undoBtn').onclick = undo; $('#redoBtn').onclick = redo;
     $('#shareBtn').onclick = openShare;
     $('#moreBtn').onclick = openMoreMenu;
-    $('#scnBtn').onclick = openScenarioMenu;
+    $('#scnBtn').onclick = openScenarioList;
     $('#customBtn').onclick = openCustomModal;
     $('#origPlanBtn').onclick = openOrigPlan;
     $('#galleryBtn').onclick = () => openGallery();
@@ -2716,41 +2886,54 @@
     bindUI();
     renderBase(); renderWalls();
     official = await loadOfficial();
-    const liveOn = !!(window.FIREBASE_CONFIG && window.LiveSync) || /[?&](livemock|selftest=live)\b/.test(location.search);
-    ensureScenarios(liveOn);
-    if (liveOn) {
-      live.on = true;
-      if (!store.live || !store.live.doc) store.live = { doc: baseDoc(), base: null };
-      try { store.live.doc = normalizeDoc(store.live.doc); } catch (e) { store.live.doc = baseDoc(); }
-      if (store.live.base && store.live.base.doc) {
-        try { const bd = normalizeDoc(store.live.base.doc); live.base = { doc: bd, str: canon(bd), rev: store.live.base.rev || 0 }; } catch (e) { live.base = null; }
-      }
-      // 실시간이 처음 켜진 브라우저는 공용 배치를 기본 화면으로
-      if (!store.liveIntro) { store.liveIntro = true; store.current = LIVE_ID; }
-      if (store.current !== LIVE_ID && !store.scenarios[store.current]) store.current = LIVE_ID;
-      persist();
+
+    // 이전 버전 저장 데이터 정리 (브라우저 시나리오 → 목록의 '이 브라우저' 항목으로 유지)
+    Object.values(store.scenarios).forEach((sc) => { try { sc.doc = normalizeDoc(sc.doc); } catch (e) { sc.doc = P.defaultDoc(); } });
+    if (!store.work || !store.work.doc) {
+      const legacy = store.current && store.scenarios[store.current];
+      if (legacy && legacy.dirty) store.work = { doc: cloneDoc(legacy.doc), src: { kind: 'local', id: legacy.id, name: legacy.name, author: legacy.author || '', rev: 0 }, savedStr: canon(legacy.doc) };
+      else { const d = baseDoc(); store.work = { doc: d, src: null, savedStr: canon(d) }; }
     }
+    try { store.work.doc = normalizeDoc(store.work.doc); } catch (e) { const d = baseDoc(); store.work = { doc: d, src: null, savedStr: canon(d) }; }
+    if (typeof store.work.savedStr !== 'string') store.work.savedStr = canon(store.work.doc);
+    ['current', 'live', 'liveIntro', 'dismissed', 'editorName', 'liveDefaultSet'].forEach((k) => { delete store[k]; });
+    persist();
+
+    const qs = location.search;
+    const mockServer = /selftest=server|[?&]servermock\b/.test(qs);
+    const forceLocal = (/[?&]selftest\b/.test(qs) && !mockServer && !/selftest=fb/.test(qs)) || /[?&]local\b/.test(qs);
+    const serverOn = mockServer || (!!window.FIREBASE_CONFIG && !!window.LiveSync && !forceLocal);
+    const link = /#sc=([A-Za-z0-9_-]+)/.exec(location.hash);
+    if (link) state.linkScenarioId = link[1];
+
     const shared = await readShareHash();
     if (shared) {
       state.shared = { name: shared.name, doc: shared.doc, dirty: false };
       state.doc = shared.doc;
-      $('#scnName').textContent = shared.name || '공유받은 배치안';
-    } else {
-      state.doc = scenarioDoc(store.current);
-      $('#scnName').textContent = currentName();
-    }
-    if (liveOn) connectLive();
-    setTab(state.mode === 'edit' ? 'items' : 'people');
+    } else state.doc = store.work.doc;
+    renderScnButton();
+    setTab(store.mode === 'edit' && !shared ? 'items' : 'people');
     setMode(shared ? 'view' : (store.mode === 'edit' ? 'edit' : 'view'));
     if (state.mode === 'edit') setTab('items');
     fit(false);
+    if (!serverOn && isDirty()) state.restoredWork = true;
     renderBanner();
+    if (serverOn) connectServer(mockServer);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { _tw.clear(); renderLabels(); renderRoomLabels(); renderMarks(); });
     if (!store.seen && !shared) {
       store.seen = true; persist();
       setTimeout(() => toast('이름으로 자리를 찾거나, 편집 모드에서 배치를 시뮬레이션해 보세요', { icon: 'sparkles', ms: 6000 }), 600);
     }
-    window.__app = { state, store, api: { select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc, setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab, openCustomModal, openShare, openHelp, openGallery, newScenario, switchScenario, persist, baseDoc, merge3, canon, openHistory, publishDraft, restoreVersion, live: () => live, setView: (k, x, y) => { const r = stageSize(); Object.assign(state.view, { k, tx: r.w / 2 - x * k, ty: r.h / 2 - y * k }); applyView(); } }, P, S };
+    window.__app = {
+      state, store, server, P, S,
+      api: {
+        select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc,
+        setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab,
+        openCustomModal, openShare, openHelp, openGallery, persist, baseDoc, canon, isDirty,
+        openSaveDialog, doSave, openScenarioList, openScenario, startNew, openVersions, deleteSel, duplicateSel,
+        setView: (k, x, y) => { const r = stageSize(); Object.assign(state.view, { k, tx: r.w / 2 - x * k, ty: r.h / 2 - y * k }); applyView(); },
+      },
+    };
     document.documentElement.setAttribute('data-ready', '1');
     if (/[?&]selftest\b/.test(location.search)) { const sc = document.createElement('script'); sc.src = 'js/selftest.js'; document.body.appendChild(sc); }
   }

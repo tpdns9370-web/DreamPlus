@@ -275,19 +275,118 @@
     return s;
   }
 
+  // 앵글(철제) 랙 — 위에서 본 선반 판. 박스는 별도 아이템으로 올려 놓는다.
   function rack(w, h, o) {
+    const c = o.color || '#E9ECEF';
     let s = shadowR(w, h, 1);
-    s += rect(-w / 2, -h / 2, w, h, 1, 'fill="#EEF0F3" stroke="#8D96A2" stroke-width="1.6"');
-    s += line(-w / 2, -h / 2, w / 2, h / 2, 'stroke="#C3C9D1" stroke-width=".8"');
-    s += line(-w / 2, h / 2, w / 2, -h / 2, 'stroke="#C3C9D1" stroke-width=".8"');
-    const n = Math.max(1, Math.floor(w / 38));
-    const bw = (w - 8) / n;
-    for (let i = 0; i < n; i++) {
-      const bx = -w / 2 + 4 + i * bw + 1.5, bh = h * (0.62 + (i % 2) * 0.16);
-      s += rect(bx, -h / 2 + 4, bw - 3, bh, 1, 'fill="#D9B887" stroke="#B48F5B" stroke-width=".8"');
-      s += line(bx + (bw - 3) / 2, -h / 2 + 4, bx + (bw - 3) / 2, -h / 2 + 4 + bh, 'stroke="#C9A36B" stroke-width="1.6"');
+    s += rect(-w / 2, -h / 2, w, h, 1, `fill="${c}" stroke="#7F8994" stroke-width="1.8"`);
+    const n = Math.max(2, Math.round(w / 12));
+    for (let i = 1; i < n; i++) {
+      const x = -w / 2 + (w * i) / n;
+      s += line(x, -h / 2 + 3, x, h / 2 - 3, 'stroke="#CDD3DA" stroke-width="1.2"');
     }
-    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([a, b]) => { s += rect(a * (w / 2 - 2) - 2, b * (h / 2 - 2) - 2, 4, 4, 0, 'fill="#6E7782"'); });
+    s += rect(-w / 2 + 2, -h / 2 + 2, w - 4, 2.4, 0, 'fill="#A9B2BC"') + rect(-w / 2 + 2, h / 2 - 4.4, w - 4, 2.4, 0, 'fill="#A9B2BC"');
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([a, b]) => { s += rect(a * (w / 2 - 2.5) - 2.5, b * (h / 2 - 2.5) - 2.5, 5, 5, 0.6, 'fill="#5F6873"'); });
+    return s;
+  }
+
+  // 골판지 박스 (위에서 본 모습: 테이프 + 날개 이음)
+  function box(w, h, o) {
+    const c = o.color || '#D8B583';
+    let s = shadowR(w, h, 1);
+    s += rect(-w / 2, -h / 2, w, h, 1, `fill="${c}" stroke="${shade(c, -0.28)}" stroke-width="1"`);
+    s += line(-w / 2 + 1, 0, w / 2 - 1, 0, `stroke="${shade(c, -0.18)}" stroke-width=".8"`);
+    s += rect(-w / 2, -Math.min(4, h * 0.12), w, Math.min(8, h * 0.24), 0, `fill="${shade(c, 0.22)}" opacity=".85"`);
+    s += rect(-w / 2 + 2, -h / 2 + 2, w * 0.18, h * 0.16, 0.5, `fill="#fff" opacity="${w > 30 ? 0.55 : 0}"`);
+    return s;
+  }
+
+  function archiveBox(w, h, o) {
+    const c = o.color || '#F1F2F4';
+    let s = shadowR(w, h, 1.5);
+    s += rect(-w / 2, -h / 2, w, h, 1.5, `fill="${c}" stroke="#9AA3AE" stroke-width="1"`);
+    s += rect(-w / 2 + 2, -h / 2 + 2, w - 4, h - 4, 1, 'fill="none" stroke="#C9CED6" stroke-width=".8"');
+    s += rect(-w * 0.18, h / 2 - h * 0.2, w * 0.36, h * 0.09, h * 0.045, 'fill="#5B6470"');
+    s += rect(-w * 0.32, -h * 0.28, w * 0.64, h * 0.26, 1, 'fill="#fff" stroke="#C9CED6" stroke-width=".6"');
+    return s;
+  }
+
+  // 서류 뭉치 (A4 여러 장이 조금씩 어긋나게 쌓임)
+  function papers(w, h, o) {
+    let s = '';
+    s += rect(-w / 2 + 2.5, -h / 2 + 3, w - 2, h - 2, 0.6, 'fill="#1b1f24" opacity=".08"');
+    s += `<g transform="rotate(-5)">${rect(-w / 2 + 1, -h / 2 + 1, w - 2, h - 2, 0.6, 'fill="#F3F1EA" stroke="#C9C4B8" stroke-width=".6"')}</g>`;
+    s += `<g transform="rotate(3)">${rect(-w / 2 + 1, -h / 2 + 1, w - 2, h - 2, 0.6, 'fill="#FAF8F2" stroke="#CFCABE" stroke-width=".6"')}</g>`;
+    s += rect(-w / 2 + 1, -h / 2 + 1, w - 2, h - 2, 0.6, 'fill="#FFFFFF" stroke="#C4BFB2" stroke-width=".7"');
+    for (let i = 0; i < 5; i++) s += line(-w / 2 + 4, -h / 2 + 5 + i * (h - 10) / 5, w / 2 - 4 - (i % 2) * w * 0.2, -h / 2 + 5 + i * (h - 10) / 5, 'stroke="#C9CDD4" stroke-width=".8"');
+    s += rect(-w / 2 + 2, -h / 2 - 0.5, Math.min(6, w * 0.2), 3, 0.8, 'fill="#6B7280"');
+    return s;
+  }
+
+  // 모니터 (화면이 +y 쪽 = 책상 앞 사람 방향, 받침은 뒤쪽)
+  function monitor(w, h, o) {
+    let s = '';
+    s += ell(0, -h / 2 + h * 0.36, w * 0.17, h * 0.28, 'fill="#2B2F35" opacity=".9"');
+    s += rect(-w * 0.03, -h / 2 + h * 0.2, w * 0.06, h * 0.45, 1, 'fill="#3A3F46"');
+    s += rect(-w / 2 + 1.5, h / 2 - h * 0.26 + 1, w, h * 0.22, 1.2, 'fill="#1b1f24" opacity=".12"');
+    s += rect(-w / 2, h / 2 - h * 0.26, w, h * 0.22, 1.2, 'fill="#1E2227"');
+    s += rect(-w / 2 + 2, h / 2 - h * 0.26 + 1, w - 4, h * 0.07, 0.6, 'fill="#5B8DEF" opacity=".55"');
+    return s;
+  }
+  function monitorDual(w, h, o) {
+    const half = w / 2 - 1;
+    let s = ell(0, -h / 2 + h * 0.34, w * 0.1, h * 0.26, 'fill="#2B2F35" opacity=".9"');
+    s += rect(-w * 0.02, -h / 2 + h * 0.18, w * 0.04, h * 0.44, 1, 'fill="#3A3F46"');
+    [-1, 1].forEach((sg) => {
+      s += `<g transform="translate(${r1(sg * (half / 2 + 0.5))} ${r1(h / 2 - h * 0.17)}) rotate(${sg * -6})">` +
+        rect(-half / 2, -h * 0.1, half, h * 0.2, 1.2, 'fill="#1E2227"') +
+        rect(-half / 2 + 2, -h * 0.1 + 1, half - 4, h * 0.06, 0.6, 'fill="#5B8DEF" opacity=".55"') + '</g>';
+    });
+    return s;
+  }
+  function laptop(w, h, o) {
+    let s = shadowR(w, h, 1.5);
+    s += rect(-w / 2, -h / 2 + h * 0.12, w, h * 0.88, 1.5, 'fill="#C9CDD3" stroke="#9AA1A9" stroke-width=".7"');
+    s += rect(-w / 2 + 2, -h / 2 + h * 0.2, w - 4, h * 0.42, 0.8, 'fill="#3A3F46"');
+    for (let i = 0; i < 3; i++) s += line(-w / 2 + 3, -h / 2 + h * (0.27 + i * 0.12), w / 2 - 3, -h / 2 + h * (0.27 + i * 0.12), 'stroke="#555B63" stroke-width=".7"');
+    s += rect(-w * 0.16, h / 2 - h * 0.28, w * 0.32, h * 0.18, 0.8, 'fill="#B5BAC1"');
+    s += rect(-w / 2 + 1, -h / 2, w - 2, h * 0.12, 0.8, 'fill="#2A2E35"');
+    return s;
+  }
+  function deskLamp(w, h, o) {
+    let s = '';
+    s += ell(0, -h / 2 + w / 2, w / 2, w / 2, 'fill="#2F343B"');
+    s += line(0, -h / 2 + w / 2, 0, h / 2 - w * 0.45, 'stroke="#4B5159" stroke-width="2.4" stroke-linecap="round"');
+    s += ell(0, h / 2 - w * 0.45, w * 0.48, w * 0.42, 'fill="#3A3F46"');
+    s += ell(0, h / 2 - w * 0.45, w * 0.3, w * 0.26, 'fill="#FDE68A" opacity=".9"');
+    return s;
+  }
+  function deskPhone(w, h, o) {
+    let s = shadowR(w, h, 2);
+    s += rect(-w / 2, -h / 2, w, h, 2.5, 'fill="#2F343B"');
+    s += rect(-w / 2 + 1.5, -h / 2 + 1.5, w * 0.34, h - 3, 2, 'fill="#1F2328"');
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 3; c++) s += rect(w * -0.08 + c * w * 0.17, -h / 2 + 3 + r * (h - 5) / 4, w * 0.11, (h - 5) / 4 - 1.2, 0.6, 'fill="#5C626B"');
+    return s;
+  }
+
+  // 회의실 대형 모니터 — 이동식 스탠드 / 벽걸이
+  function displayStand(w, h, o) {
+    let s = shadowR(w * 0.5, h, 3);
+    [-1, 1].forEach((sg) => {
+      const x = sg * w * 0.22;
+      s += rect(x - 3, -h / 2, 6, h, 3, 'fill="#4A5059"');
+      s += circ(x, -h / 2 + 3, 2.6, 'fill="#2B2F35"') + circ(x, h / 2 - 3, 2.6, 'fill="#2B2F35"');
+    });
+    s += rect(-w * 0.24, -3, w * 0.48, 6, 2, 'fill="#5C636D"');
+    s += rect(-w / 2 + 1.5, -h * 0.05 + 1.5, w, Math.max(5, h * 0.1), 2, 'fill="#1b1f24" opacity=".15"');
+    s += rect(-w / 2, -h * 0.05, w, Math.max(5, h * 0.1), 2, 'fill="#16191D"');
+    s += rect(-w / 2 + 3, -h * 0.05 + 1, w - 6, Math.max(1.5, h * 0.03), 1, 'fill="#5B8DEF" opacity=".5"');
+    return s;
+  }
+  function displayWall(w, h, o) {
+    let s = rect(-w / 2 + 1.5, -h / 2 + 2, w, h, 2, 'fill="#1b1f24" opacity=".14"');
+    s += rect(-w / 2, -h / 2, w, h, 2, 'fill="#16191D"');
+    s += rect(-w / 2 + 3, h / 2 - h * 0.4, w - 6, h * 0.22, 1, 'fill="#5B8DEF" opacity=".5"');
     return s;
   }
 
@@ -455,8 +554,17 @@
       { type: 'meet4', name: '4인 회의 테이블', w: 160, h: 80, draw: tableMeeting, table: true },
       { type: 'meet6', name: '6인 회의 테이블', w: 240, h: 120, draw: tableMeeting, table: true },
       { type: 'meet8', name: '8인 회의 테이블', w: 300, h: 120, draw: tableMeeting, table: true },
+      { type: 'meetL', name: '대형 회의 테이블 (6인실용)', w: 280, h: 120, draw: tableMeeting, table: true, desc: '6인실(380×456)에 맞춘 6~8인용', color: '#E3CFAE' },
       { type: 'coffee', name: '커피 테이블', w: 100, h: 50, draw: tableCoffee, table: true },
       { type: 'sideTable', name: '사이드 테이블', w: 45, h: 45, draw: tableRound, table: true, round: true, color: '#C9A47A' },
+    ] },
+    { cat: 'desktop', label: '책상 위 소품', icon: 'monitor', items: [
+      { type: 'monitor', name: '모니터 27″', w: 62, h: 22, draw: monitor, top: true, desc: '책상 위에 올려 놓는 아이템' },
+      { type: 'monitorDual', name: '듀얼 모니터', w: 120, h: 24, draw: monitorDual, top: true, desc: '책상 위에 올려 놓는 아이템' },
+      { type: 'laptop', name: '노트북', w: 32, h: 23, draw: laptop, top: true },
+      { type: 'papers', name: '서류 뭉치', w: 31, h: 22, draw: papers, top: true, desc: 'A4 서류 더미' },
+      { type: 'deskLamp', name: '스탠드 조명', w: 16, h: 38, draw: deskLamp, top: true },
+      { type: 'deskPhone', name: '탁상 전화기', w: 20, h: 18, draw: deskPhone, top: true },
     ] },
     { cat: 'set', label: '세트', icon: 'set', items: [
       { type: 'set:desk140', name: '책상 세트 140', set: [['desk140', 0, -31, 0], ['chair', 0, 31, 0]], desc: '책상 + 의자' },
@@ -465,13 +573,30 @@
       { type: 'set:round2', name: '원형 2인 세트', set: [['round2', 0, 0, 0], ['chair', -72, 0, 90], ['chair', 72, 0, 270]], desc: '원형 책상 + 의자 2' },
       { type: 'set:square2', name: '사각 2인 세트', set: [['square2', 0, 0, 0], ['chair', 0, -72, 180], ['chair', 0, 72, 0]], desc: '사각 책상 + 의자 2' },
       { type: 'set:meet6', name: '회의 6인 세트', set: [['meet6', 0, 0, 0], ['chairGuest', -80, -88, 180], ['chairGuest', 0, -88, 180], ['chairGuest', 80, -88, 180], ['chairGuest', -80, 88, 0], ['chairGuest', 0, 88, 0], ['chairGuest', 80, 88, 0]], desc: '회의 테이블 + 의자 6' },
+      { type: 'set:meetL', name: '6인실 회의 세트', set: [['meetL', 0, 0, 0], ['chairGuest', -95, -88, 180], ['chairGuest', 0, -88, 180], ['chairGuest', 95, -88, 180], ['chairGuest', -95, 88, 0], ['chairGuest', 0, 88, 0], ['chairGuest', 95, 88, 0]], desc: '대형 회의 테이블 + 의자 6' },
+      { type: 'set:rackBox', name: '랙 + 박스', set: [['rack', 0, 0, 0], ['box4', -38, 0, 0], ['box4', 4, 0, 0], ['box3', 42, -4, 0]], desc: '앵글 랙 120 + 박스 3개' },
     ] },
     { cat: 'storage', label: '수납', icon: 'storage', items: [
       { type: 'pedestal', name: '이동식 서랍', w: 40, h: 55, draw: pedestal },
       { type: 'cabinet', name: '캐비닛', w: 80, h: 45, draw: cabinet },
       { type: 'bookshelf', name: '책장', w: 120, h: 35, draw: bookshelf },
       { type: 'locker', name: '사물함', w: 90, h: 50, draw: locker },
-      { type: 'rack', name: '철제 선반', w: 120, h: 45, draw: rack, desc: '창고용 앵글 선반' },
+    ] },
+    { cat: 'rack', label: '랙 · 박스', icon: 'box', items: [
+      { type: 'rack90', name: '앵글 랙 90', w: 90, h: 45, draw: rack, desc: '900×450 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack', name: '앵글 랙 120', w: 120, h: 45, draw: rack, desc: '1200×450 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack150', name: '앵글 랙 150', w: 150, h: 45, draw: rack, desc: '1500×450 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack120d', name: '앵글 랙 120 (깊은)', w: 120, h: 60, draw: rack, desc: '1200×600 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack150d', name: '앵글 랙 150 (깊은)', w: 150, h: 60, draw: rack, desc: '1500×600 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack180d', name: '앵글 랙 180 (깊은)', w: 180, h: 60, draw: rack, desc: '1800×600 · 박스를 위에 올릴 수 있어요' },
+      { type: 'box1', name: '박스 1호', w: 22, h: 19, draw: box, top: true, desc: '우체국 1호 (22×19×9)' },
+      { type: 'box2', name: '박스 2호', w: 27, h: 18, draw: box, top: true, desc: '우체국 2호 (27×18×15)' },
+      { type: 'box3', name: '박스 3호', w: 34, h: 25, draw: box, top: true, desc: '우체국 3호 (34×25×21)' },
+      { type: 'box4', name: '박스 4호', w: 41, h: 31, draw: box, top: true, desc: '우체국 4호 (41×31×28)' },
+      { type: 'box5', name: '박스 5호', w: 48, h: 38, draw: box, top: true, desc: '우체국 5호 (48×38×34)' },
+      { type: 'box6', name: '박스 6호', w: 52, h: 48, draw: box, top: true, desc: '우체국 6호 (52×48×40)' },
+      { type: 'boxMove', name: '이사 박스', w: 60, h: 40, draw: box, top: true, desc: '대형 (60×40×40)' },
+      { type: 'boxDoc', name: '문서 보관 박스', w: 33, h: 26, draw: archiveBox, top: true, desc: 'A4 서류 보관용' },
     ] },
     { cat: 'lounge', label: '라운지', icon: 'sofa', items: [
       { type: 'sofa2', name: '2인 소파', w: 150, h: 80, draw: (w, h, o) => sofa(w, h, o, 2) },
@@ -484,6 +609,8 @@
       { type: 'printer', name: '복합기', w: 65, h: 60, draw: printer },
       { type: 'fridge', name: '냉장고', w: 60, h: 65, draw: fridge },
       { type: 'water', name: '정수기', w: 35, h: 45, draw: water },
+      { type: 'display75', name: '회의실 대형 모니터 75″', w: 170, h: 62, draw: displayStand, desc: '이동식 스탠드형' },
+      { type: 'display86', name: '벽걸이 대형 모니터 86″', w: 195, h: 10, draw: displayWall, desc: '벽에 붙여 배치' },
       { type: 'tv', name: 'TV · 디스플레이', w: 140, h: 45, draw: tv, desc: '스탠드 포함' },
       { type: 'whiteboard', name: '이동식 화이트보드', w: 180, h: 60, draw: whiteboard },
       { type: 'server', name: '서버 랙', w: 60, h: 100, draw: server },
@@ -491,7 +618,7 @@
     ] },
     { cat: 'deco', label: '데코·기타', icon: 'plant', items: [
       { type: 'plantL', name: '대형 화분', w: 60, h: 60, draw: plant, round: true },
-      { type: 'plantS', name: '소형 화분', w: 35, h: 35, draw: plant, round: true },
+      { type: 'plantS', name: '소형 화분', w: 35, h: 35, draw: plant, round: true, top: true, desc: '책상 위에도 놓을 수 있어요' },
       { type: 'trash', name: '휴지통', w: 30, h: 30, draw: trash, round: true },
       { type: 'hanger', name: '옷걸이', w: 45, h: 45, draw: hanger, round: true },
       { type: 'partition', name: '파티션', w: 120, h: 6, draw: partition },
