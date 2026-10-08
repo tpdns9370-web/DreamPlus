@@ -95,6 +95,24 @@ body.mode-edit .view-only { display: none !important; }
 .scn-btn { height: 38px; gap: 8px; padding: 0 10px; border-radius: 10px; }
 .scn-btn .scn-label { font-size: 11px; color: var(--text-3); font-weight: 600; padding: 2px 6px; background: var(--panel-2); border-radius: 6px; }
 .scn-btn b { max-width: 180px; overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
+.scn { display: flex; align-items: center; gap: 6px; }
+.live-badge {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 20px; border: 0;
+  font-size: 12px; font-weight: 750; background: #E4F6EE; color: #0B7A5E; white-space: nowrap;
+}
+.live-badge i { width: 8px; height: 8px; border-radius: 50%; background: #12A27A; animation: livePulse 1.8s infinite; }
+.live-badge.connecting { background: #F0EFEB; color: #6B7079; }
+.live-badge.connecting i { background: #A0A5AD; animation: none; }
+.live-badge.offline, .live-badge.error { background: var(--warn-soft); color: #8A5300; }
+.live-badge.offline i, .live-badge.error i { background: #E59400; animation: none; }
+.live-badge.muted { opacity: .55; }
+@keyframes livePulse { 0% { box-shadow: 0 0 0 0 rgba(18, 162, 122, .5); } 70% { box-shadow: 0 0 0 7px rgba(18, 162, 122, 0); } 100% { box-shadow: 0 0 0 0 rgba(18, 162, 122, 0); } }
+.hist-list { display: grid; gap: 6px; max-height: 50vh; overflow: auto; }
+.hist-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 11px; border: 1px solid var(--line-2); background: var(--panel-2); }
+.hist-main { flex: 1; min-width: 0; }
+.hist-main b { font-size: 13.5px; }
+.hist-main small { margin-left: 6px; color: var(--text-3); font-size: 11.5px; font-weight: 600; }
+.hist-sub { font-size: 12px; color: var(--text-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seg { display: inline-flex; padding: 3px; background: #EFEDE8; border-radius: 11px; gap: 2px; }
 .seg button {
   display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border: 0; background: transparent;

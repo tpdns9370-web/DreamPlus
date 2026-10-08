@@ -1,0 +1,36 @@
+rules_version = '2';
+// Firebase 콘솔 → Firestore Database → 규칙(Rules) 탭에 붙여넣고 '게시'
+// - 누구나 공용 배치를 볼 수 있음
+// - 편집은 익명 로그인(앱이 자동 처리)된 브라우저만, 형식·크기 검증 + 버전 번호 순차 증가
+// - 버전 기록(history)은 추가만 가능하고 수정·삭제 불가 → 잘못된 편집도 언제든 복원 가능
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function validLayout() {
+      return request.auth != null
+        && request.resource.data.keys().hasOnly(['data', 'rev', 'updatedAt', 'by', 'name'])
+        && request.resource.data.data is string
+        && request.resource.data.data.size() < 700000
+        && request.resource.data.rev is int
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 40
+        && request.resource.data.updatedAt == request.time;
+    }
+    match /layouts/main {
+      allow read: if true;
+      allow create: if validLayout() && request.resource.data.rev == 1;
+      allow update: if validLayout() && request.resource.data.rev == resource.data.rev + 1;
+      allow delete: if false;
+      match /history/{hid} {
+        allow read: if true;
+        allow create: if request.auth != null
+          && request.resource.data.keys().hasOnly(['data', 'rev', 'createdAt', 'by', 'name', 'note'])
+          && request.resource.data.data is string
+          && request.resource.data.data.size() < 700000
+          && request.resource.data.by == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+  }
+}

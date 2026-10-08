@@ -216,7 +216,7 @@
   /* ============================================================ storage */
   const LS_KEY = 'inertia17f:v1';
   const BUILTIN_STAMP = 'builtin:2026-10-08';
-  let store = { v: 1, current: null, scenarios: {}, prefs: {}, mode: 'view', customs: [], seen: false, dismissed: '' };
+  let store = { v: 1, current: null, scenarios: {}, prefs: {}, mode: 'view', customs: [], seen: false, dismissed: '', live: null, editorName: '' };
   let official = null; // { stamp, doc }
 
   function loadStore() {
@@ -231,18 +231,28 @@
   let saveTimer = 0;
   function scheduleSave() {
     if (state.shared) { state.shared.dirty = true; renderBanner(); return; }
+    clearTimeout(saveTimer);
+    if (isLive()) {
+      store.live.doc = state.doc;
+      setSaveText('동기화 대기', true);
+      saveTimer = setTimeout(writeNow, 350);
+      schedulePush();
+      return;
+    }
     const sc = store.scenarios[store.current];
     if (sc) { sc.dirty = true; sc.updated = Date.now(); }
-    const el = $('#saveState');
-    el.classList.add('saving'); el.querySelector('span').textContent = '저장 중…';
-    clearTimeout(saveTimer);
+    setSaveText('저장 중…', true);
     saveTimer = setTimeout(writeNow, 350);
   }
   function writeNow() {
     clearTimeout(saveTimer); saveTimer = 0;
     const ok = persist();
+    if (isLive()) return; // 실시간 모드의 상태 표시는 동기화 결과가 담당
+    setSaveText(ok ? '저장됨' : '저장 실패', false);
+  }
+  function setSaveText(t, busy) {
     const el = $('#saveState');
-    el.classList.remove('saving'); el.querySelector('span').textContent = ok ? '저장됨' : '저장 실패';
+    el.classList.toggle('saving', !!busy); el.querySelector('span').textContent = t;
   }
   // 탭 닫기 · 새로고침 · 다른 앱 전환 시: 입력 중이던 내용 확정 + 대기 중인 저장 즉시 기록
   function flushSave() {
@@ -308,10 +318,11 @@
     } catch (e) { return null; }
   }
 
-  function ensureScenarios() {
+  function ensureScenarios(liveOn) {
     const ids = Object.keys(store.scenarios);
     if (!ids.length) {
-      store.current = newScenario(official ? official.name : '기본 배치안', baseDoc(), 'official', baseStamp());
+      // 실시간 공용 배치가 있으면 초안은 필요할 때만 만든다
+      if (!liveOn) store.current = newScenario(official ? official.name : '기본 배치안', baseDoc(), 'official', baseStamp());
       persist();
       return;
     }
@@ -325,19 +336,21 @@
         else if (official && store.dismissed !== official.stamp) notice = true;
       }
     });
-    if (!store.scenarios[store.current]) store.current = ids[0];
+    if (!store.scenarios[store.current] && !(liveOn && store.current === LIVE_ID)) store.current = ids[0];
     state.officialNotice = notice;
     persist();
   }
+  const scenarioDoc = (id) => (id === LIVE_ID ? store.live.doc : store.scenarios[id].doc);
   function switchScenario(id) {
-    if (!store.scenarios[id]) return;
+    if (id === LIVE_ID ? !live.on : !store.scenarios[id]) return;
     state.shared = null;
     store.current = id; persist();
-    state.doc = store.scenarios[id].doc;
-    hist.undo = []; hist.redo = [];
+    state.doc = scenarioDoc(id);
+    hist.undo = []; hist.redo = []; hist.pending = null;
     state.sel.clear(); state.selRoom = null; state.highlight = null;
-    renderAll(); renderBanner();
-    $('#scnName').textContent = store.scenarios[id].name;
+    renderAll(); renderBanner(); renderLiveBadge();
+    if (isLive()) setLiveSaveText(); else setSaveText('저장됨', false);
+    $('#scnName').textContent = currentName();
   }
 
   /* ============================================================ history */
@@ -365,6 +378,7 @@
   function restoreDoc(json) {
     const d = JSON.parse(json);
     if (state.shared) state.shared.doc = d;
+    else if (store.current === LIVE_ID) store.live.doc = d;
     else store.scenarios[store.current].doc = d;
     state.doc = d;
   }
@@ -377,6 +391,226 @@
     if (!hist.redo.length) return;
     hist.undo.push(snap()); restoreDoc(hist.redo.pop()); hist.coalesce = null;
     scheduleSave(); renderAll(); toast('다시 실행', { icon: 'redo', ms: 1200 });
+  }
+
+  /* ============================================================ live sync (공용 배치) */
+  const LIVE_ID = 'live';
+  const live = {
+    on: false, backend: null, status: 'off', err: '', base: null, meta: null,
+    pushing: false, again: false, pushTimer: 0, pending: null, lastPushed: null,
+    lastHistory: 0, toastAt: 0, seeding: false, ready: false,
+  };
+  const isLive = () => live.on && !state.shared && store.current === LIVE_ID;
+  function sortKeys(v) {
+    if (Array.isArray(v)) return v.map(sortKeys);
+    if (v && typeof v === 'object') { const o = {}; Object.keys(v).sort().forEach((k) => { if (v[k] !== undefined) o[k] = sortKeys(v[k]); }); return o; }
+    return v;
+  }
+  const canon = (v) => JSON.stringify(sortKeys(v));
+  /** 3-way 병합 (아이템 단위): 서버(r) 기준으로 내 변경(base→local)만 덮어쓴다 */
+  function mergeById(b, l, r) {
+    const B = new Map(b.map((x) => [x.id, x])), Lm = new Map(l.map((x) => [x.id, x])), R = new Map(r.map((x) => [x.id, x]));
+    const out = r.slice();
+    const pos = new Map(out.map((x, i) => [x.id, i]));
+    B.forEach((bx, id) => {
+      const lx = Lm.get(id);
+      if (!lx) { if (pos.has(id)) out[pos.get(id)] = null; }
+      else if (canon(lx) !== canon(bx)) { if (pos.has(id)) out[pos.get(id)] = lx; else out.push(lx); }
+    });
+    Lm.forEach((lx, id) => { if (!B.has(id) && !R.has(id)) out.push(lx); });
+    return out.filter(Boolean);
+  }
+  function merge3(b, l, r) {
+    const rooms = Object.assign({}, r.rooms);
+    new Set(Object.keys(b.rooms || {}).concat(Object.keys(l.rooms || {}))).forEach((k) => {
+      if (canon(l.rooms[k] || null) !== canon(b.rooms[k] || null)) { if (l.rooms[k]) rooms[k] = l.rooms[k]; else delete rooms[k]; }
+    });
+    return { v: 1, items: mergeById(b.items, l.items, r.items), rooms, teams: mergeById(b.teams || [], l.teams || [], r.teams || []), meta: Object.assign({}, r.meta) };
+  }
+  const editorName = () => store.editorName || '익명';
+  function setBase(doc, rev) {
+    live.base = { doc: cloneDoc(doc), str: canon(doc), rev };
+    store.live.base = { doc: live.base.doc, rev };
+  }
+  const liveDirty = () => !!live.base && canon(store.live.doc) !== live.base.str;
+  function replaceLiveDoc(d, fromOthers) {
+    store.live.doc = d;
+    if (isLive()) {
+      state.doc = d;
+      if (fromOthers) { hist.undo = []; hist.redo = []; if (hist.pending !== null) hist.pending = snap(); }
+      renderAll();
+    }
+    persist();
+  }
+
+  async function connectLive() {
+    live.on = true;
+    setLiveStatus('connecting');
+    try {
+      const mock = /[?&](livemock|selftest=live)\b/.test(location.search);
+      live.backend = mock ? window.LiveSync.memory() : await window.LiveSync.firebase(window.FIREBASE_CONFIG);
+      live.backend.start(onLiveSnap, (err) => { live.err = (err && err.message) || String(err); setLiveStatus('error'); });
+    } catch (e) {
+      live.err = e.message; setLiveStatus('offline');
+    }
+  }
+  function onLiveSnap(s) {
+    if (!s.exists) { if (!live.seeding) { live.seeding = true; pushLive(true); } return; }
+    live.meta = { rev: s.rev, by: s.by, name: s.name, updatedAt: s.updatedAt };
+    setLiveStatus('live');
+    if (live.base && s.rev <= live.base.rev) { live.ready = true; if (liveDirty()) schedulePush(200); setLiveSaveText(); return; }
+    if (s.data === live.lastPushed) { setBase(normalizeDoc(JSON.parse(s.data)), s.rev); persist(); live.ready = true; return; }
+    if (drag || live.pushing) { live.pending = s; return; }
+    applyRemote(s);
+  }
+  function applyRemote(s) {
+    let remote;
+    try { remote = normalizeDoc(JSON.parse(s.data)); } catch (e) { return; }
+    const dirty = liveDirty();
+    const next = dirty ? merge3(live.base.doc, store.live.doc, remote) : remote;
+    const changed = canon(next) !== canon(store.live.doc);
+    setBase(remote, s.rev);
+    if (changed) replaceLiveDoc(next, true); else persist();
+    if (dirty) schedulePush(200);
+    const mine = s.by && live.backend && s.by === live.backend.uid();
+    if (changed && !mine && live.ready && isLive() && Date.now() - live.toastAt > 5000) {
+      live.toastAt = Date.now();
+      toast(`${s.name || '다른 사용자'} 님이 공용 배치를 수정했어요`, { icon: 'users', ms: 2400 });
+    }
+    live.ready = true;
+    setLiveSaveText();
+  }
+  function schedulePush(ms) {
+    if (!live.on) return;
+    clearTimeout(live.pushTimer);
+    live.pushTimer = setTimeout(() => pushLive(false), ms == null ? 500 : ms);
+  }
+  async function pushLive(seed) {
+    if (!live.backend) return;
+    if (live.pushing) { live.again = true; return; }
+    if (drag) { schedulePush(300); return; }
+    const local = cloneDoc(store.live.doc);
+    const localStr = canon(local);
+    if (!seed && live.base && localStr === live.base.str) { setLiveSaveText(); return; }
+    const baseSnap = live.base;
+    live.pushing = true;
+    if (isLive()) setSaveText('동기화 중…', true);
+    try {
+      const res = await live.backend.commit((cur) => {
+        if (!cur) return { data: JSON.stringify(local), name: editorName() };
+        if (!baseSnap) return { skip: true };
+        if (cur.rev === baseSnap.rev) return { data: JSON.stringify(local), name: editorName() };
+        return { data: JSON.stringify(merge3(baseSnap.doc, local, normalizeDoc(JSON.parse(cur.data)))), name: editorName() };
+      });
+      const out = normalizeDoc(JSON.parse(res.data));
+      if (!res.skipped) live.lastPushed = res.data;
+      setBase(out, res.rev);
+      const nowLocal = store.live.doc;
+      if (canon(nowLocal) !== localStr) { replaceLiveDoc(merge3(local, nowLocal, out), false); schedulePush(150); }
+      else if (canon(out) !== localStr) replaceLiveDoc(out, true);
+      else persist();
+      if (!res.skipped) { maybeHistory(res, seed ? '처음 생성' : ''); live.seeding = false; }
+      live.ready = true;
+      setLiveStatus('live'); setLiveSaveText();
+    } catch (e) {
+      live.err = (e && e.message) || String(e);
+      if (isLive()) setSaveText('동기화 실패 · 재시도 중', true);
+      setLiveStatus('error');
+      schedulePush(5000);
+    } finally {
+      live.pushing = false;
+      if (live.pending) { const p = live.pending; live.pending = null; onLiveSnap(p); }
+      if (live.again) { live.again = false; schedulePush(100); }
+    }
+  }
+  function maybeHistory(res, note) {
+    const now = Date.now();
+    if (!note && now - live.lastHistory < 10 * 60 * 1000) return;
+    live.lastHistory = now;
+    live.backend.addHistory({ data: res.data, rev: res.rev, name: editorName(), note: note || '자동 기록' }).catch(() => {});
+  }
+  async function snapshotNow(note) {
+    if (!live.backend || !live.base) return;
+    try { await live.backend.addHistory({ data: JSON.stringify(live.base.doc), rev: live.base.rev, name: editorName(), note }); } catch (e) { /* 기록 실패는 무시 */ }
+  }
+  function ago(ms) {
+    const s = Math.max(0, (Date.now() - ms) / 1000);
+    if (s < 60) return '방금';
+    if (s < 3600) return Math.floor(s / 60) + '분 전';
+    if (s < 86400) return Math.floor(s / 3600) + '시간 전';
+    return Math.floor(s / 86400) + '일 전';
+  }
+  const fmtTime = (ms) => new Date(ms).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  function setLiveStatus(st) { live.status = st; renderLiveBadge(); }
+  function renderLiveBadge() {
+    const b = $('#liveBadge');
+    if (!b) return;
+    b.hidden = !live.on || !!state.shared;
+    b.className = 'live-badge ' + live.status + (isLive() ? '' : ' muted');
+    b.querySelector('span').textContent = { connecting: '연결 중', live: '실시간', offline: '오프라인', error: '연결 오류', off: '' }[live.status] || '';
+    const m = live.meta;
+    b.title = live.status === 'live'
+      ? `공용 배치 · 실시간 연결됨${m && m.updatedAt ? `\n마지막 수정: ${ago(m.updatedAt)} · ${m.name || '익명'}` : ''}\n클릭: 버전 기록 · 복원`
+      : live.status === 'connecting' ? '서버에 연결하는 중…' : `실시간 연결 안 됨 — 변경 내용은 이 브라우저에 보관했다가 연결되면 반영돼요${live.err ? `\n(${live.err})` : ''}`;
+  }
+  function setLiveSaveText() {
+    if (!isLive()) return;
+    if (live.status !== 'live') { setSaveText('오프라인 · 보관 중', true); return; }
+    setSaveText(liveDirty() ? '동기화 대기' : '실시간 저장됨', liveDirty());
+  }
+  function askEditorName() {
+    return askText('편집자 이름', store.editorName || '', '예: 댄 — 공용 배치 수정 기록에 표시돼요', '확인').then((n) => {
+      if (n) { store.editorName = n.slice(0, 30); persist(); }
+      else if (!store.editorName) { store.editorName = '익명'; persist(); }
+    });
+  }
+
+  async function openHistory() {
+    if (!live.backend) { toast('실시간 서버에 연결되어 있지 않아요', { icon: 'alert', err: true }); return; }
+    modal({
+      title: '공용 배치 · 버전 기록',
+      body: `<p>편집 중 10분마다, 그리고 복원·반영 직전에 자동으로 기록돼요. 기록은 지울 수 없어서 실수로 바뀐 배치도 언제든 되돌릴 수 있어요.</p>
+        ${live.meta && live.meta.updatedAt ? `<div class="note-box" style="margin-bottom:10px">현재: ${fmtTime(live.meta.updatedAt)} · ${esc(live.meta.name || '익명')} 수정 (버전 ${live.meta.rev})</div>` : ''}
+        <div id="histList" class="hist-list"><div class="pl-empty">불러오는 중…</div></div>`,
+      actions: [{ label: '지금 버전 기록', kind: 'soft', icon: 'pin', fn: () => { snapshotNow('수동 기록').then(() => toast('현재 공용 배치를 기록했어요', { icon: 'pin' })); } }, { label: '닫기', kind: 'primary' }],
+    });
+    let list = [];
+    try { list = await live.backend.listHistory(40); } catch (e) {
+      const el = $('#histList'); if (el) el.innerHTML = `<div class="pl-empty">기록을 불러오지 못했어요 (${esc(e.message)})</div>`;
+      return;
+    }
+    const el = $('#histList');
+    if (!el) return;
+    el.innerHTML = list.length ? list.map((h, i) => {
+      let desks = 0, named = 0;
+      try { JSON.parse(h.data).items.forEach((it) => { if (S.def(it.type).seat) { desks++; if (it.name) named++; } }); } catch (e) { /* skip */ }
+      return `<div class="hist-row"><div class="hist-main"><b>${fmtTime(h.createdAt)}</b><small>${ago(h.createdAt)}</small><div class="hist-sub">${esc(h.name || '익명')} · ${esc(h.note || '')} · 책상 ${desks} · 배정 ${named}</div></div><button class="btn soft sm" data-restore="${i}">${ic('rotccw')}복원</button></div>`;
+    }).join('') : '<div class="pl-empty">아직 기록이 없어요. 공용 배치를 편집하면 자동으로 기록돼요.</div>';
+    el.onclick = async (e) => {
+      const b = e.target.closest('[data-restore]');
+      if (!b) return;
+      const h = list[+b.dataset.restore];
+      closeModal();
+      if (await confirmBox('이 버전으로 복원', `${fmtTime(h.createdAt)} (${esc(h.name || '익명')}) 버전으로 공용 배치를 되돌릴까요?<br>모든 사람의 화면이 바로 바뀌어요. 현재 상태도 기록에 남겨 둬요.`, '복원하기')) restoreVersion(h);
+    };
+  }
+  async function restoreVersion(h) {
+    let doc;
+    try { doc = normalizeDoc(JSON.parse(h.data)); } catch (e) { toast('기록을 읽지 못했어요', { err: true, icon: 'alert' }); return; }
+    await snapshotNow('복원 전 자동 기록');
+    if (!isLive()) switchScenario(LIVE_ID);
+    mutate(() => { state.doc.items = doc.items; state.doc.rooms = doc.rooms; state.doc.teams = doc.teams; });
+    toast(`${fmtTime(h.createdAt)} 버전으로 복원했어요`, { icon: 'rotccw' });
+  }
+  async function publishDraft() {
+    const sc = store.scenarios[store.current];
+    if (!sc || !live.on) return;
+    if (!(await confirmBox('공용 배치에 반영', `'${esc(sc.name)}' 초안으로 공용 배치를 바꿀까요?<br>모든 사람의 화면이 바로 바뀌어요. 바꾸기 전 상태는 버전 기록에 남아 언제든 복원할 수 있어요.`, '반영하기'))) return;
+    await snapshotNow(`'${sc.name}' 반영 전 자동 기록`.slice(0, 80));
+    const doc = cloneDoc(sc.doc);
+    switchScenario(LIVE_ID);
+    mutate(() => { state.doc.items = doc.items; state.doc.rooms = doc.rooms; state.doc.teams = doc.teams; });
+    toast('공용 배치에 반영했어요 · 모두에게 바로 보여요', { icon: 'users' });
   }
 
   /* ============================================================ view */
@@ -1219,6 +1453,8 @@
       }
       default: break;
     }
+    // 드래그 중에 도착한 다른 사람의 변경을 이제 반영
+    if (live.pending && !live.pushing) { const p = live.pending; live.pending = null; onLiveSnap(p); }
   }
 
   function hover(e, wx, wy) {
@@ -1582,9 +1818,15 @@
       });
       s += '</div></div>';
     }
+    if (isLive()) {
+      const m = live.meta;
+      s += `<div class="sec"><div class="note-box ${state.mode === 'edit' ? 'warn' : 'tip'}"><b>${state.mode === 'edit' ? '공용 배치를 편집 중이에요' : '공용 배치 · 실시간'}</b><br>${state.mode === 'edit' ? '바꾸는 내용이 링크를 연 모든 사람에게 바로 보여요. 혼자 실험하려면 상단 메뉴에서 <b>새 초안</b>을 만드세요.' : '누군가 편집하면 이 화면에도 바로 반영돼요.'}${m && m.updatedAt ? `<br><span style="opacity:.8">마지막 수정: ${ago(m.updatedAt)} · ${esc(m.name || '익명')}</span>` : ''}</div></div>`;
+    } else if (live.on && !state.shared) {
+      s += `<div class="sec"><div class="note-box">지금은 <b>내 초안</b>이라 이 브라우저에만 저장돼요. 완성되면 상단 메뉴의 <b>이 초안을 공용 배치에 반영</b>으로 모두에게 공유하세요.</div></div>`;
+    }
     s += state.mode === 'edit'
       ? `<div class="sec"><div class="note-box tip"><b>건축 모드 팁</b><br>왼쪽 아이템을 끌어다 놓아 배치하고, 선택 후 <kbd>R</kbd> 회전 · <kbd>Ctrl</kbd>+<kbd>D</kbd> 복제 · <kbd>Del</kbd> 삭제. 빈 공간(6인실 등)을 클릭하면 <b>프리셋</b>으로 한 번에 꾸밀 수 있어요.</div></div>`
-      : `<div class="sec"><div class="note-box">상단 검색창에 이름을 입력하면 자리를 찾아 줘요. 배치를 바꿔 보려면 <b>편집</b> 모드로 전환하세요 — 내 브라우저에만 저장되고, <b>공유</b> 버튼으로 링크를 만들 수 있어요.</div></div>`;
+      : `<div class="sec"><div class="note-box">상단 검색창에 이름을 입력하면 자리를 찾아 줘요. 배치를 바꿔 보려면 <b>편집</b> 모드로 전환하세요${live.on ? '' : ' — 내 브라우저에만 저장되고, <b>공유</b> 버튼으로 링크를 만들 수 있어요'}.</div></div>`;
     return s;
   }
 
@@ -2146,29 +2388,46 @@
     return unpackDoc(JSON.parse(new TextDecoder().decode(bytes)));
   }
   function shareBase() { return location.href.split('#')[0].split('?')[0]; }
-  function currentName() { return state.shared ? state.shared.name : (store.scenarios[store.current] || {}).name || '배치안'; }
+  function currentName() {
+    if (state.shared) return state.shared.name;
+    if (store.current === LIVE_ID) return '공용 배치 (실시간)';
+    return (store.scenarios[store.current] || {}).name || '배치안';
+  }
 
   async function openShare() {
     const code = await encodeShare(state.doc, currentName());
     const url = shareBase() + '#s=' + code;
+    const site = shareBase();
     const local = !/^https?:/.test(location.protocol);
+    const flat = ' style="padding-top:0;border:0"';
+    const liveSec = live.on
+      ? `<div class="sec"${flat}><h4>사이트 주소 · 공용 배치 (실시간)</h4><p>이 주소를 보내면 누구나 <b>항상 최신 공용 배치</b>를 보고, 누가 편집하든 모두의 화면에 바로 반영돼요.</p>
+         <div class="share-url"><input class="inp" readonly value="${esc(site)}"><button class="btn primary" data-copy="${esc(site)}">${ic('link')}복사</button></div></div>`
+      : '';
+    const snapSec = `<div class="sec"${live.on ? '' : flat}><h4>${live.on ? '지금 화면 그대로 보내기 (스냅샷 링크)' : '공유 링크'}</h4>
+        <p>${live.on ? '공용 배치와 별개로, <b>지금 보고 있는 배치</b>(초안 포함)를 그 상태 그대로 담은 링크예요.' : '아래 링크에 <b>지금 보고 있는 배치</b>가 그대로 담겨 있어요. 받는 사람이 편집해도 원본에는 영향이 없어요.'}</p>
+        <div class="share-url"><input class="inp" readonly value="${esc(url)}"><button class="btn ${live.on ? 'soft' : 'primary'}" data-copy="${esc(url)}">${ic('link')}복사</button></div>
+        <p class="hint">링크 길이 ${url.length.toLocaleString()}자 · 배치 아이템 ${state.doc.items.length}개</p></div>`;
+    const tail = live.on
+      ? `<div style="display:flex;gap:6px;margin-top:4px"><button class="btn soft" id="openHist">${ic('rotccw')}버전 기록 · 복원</button><button class="btn soft" id="dlPng">${ic('image')}PNG 이미지</button></div>`
+      : `<div class="sec"><h4>모두가 보는 기본 배치로 게시</h4><div class="note-box">회사 링크(첫 화면)에 이 배치를 띄우려면 <b>layout.json</b> 을 내려받아 GitHub 저장소 최상위에 올리면 돼요. 이후 링크를 여는 모든 사람의 기본 배치가 바뀝니다.</div>
+        <div style="display:flex;gap:6px;margin-top:10px"><button class="btn soft" id="dlLayout">${ic('download')}layout.json 내려받기</button><button class="btn soft" id="dlPng">${ic('image')}PNG 이미지</button></div></div>`;
     modal({
       title: '공유하기',
-      body: `<p>아래 링크에 <b>지금 보고 있는 배치</b>가 그대로 담겨 있어요. 받는 사람은 링크를 열면 이 배치를 보고, 각자 편집해도 원본에는 영향이 없어요.</p>
-        <div class="share-url"><input class="inp" id="shareUrl" readonly value="${esc(url)}"><button class="btn primary" id="copyShare">${ic('link')}복사</button></div>
-        <p class="hint">링크 길이 ${url.length.toLocaleString()}자 · 배치 아이템 ${state.doc.items.length}개</p>
-        ${local ? `<div class="note-box warn" style="margin-bottom:12px">지금은 PC 파일로 열려 있어서 이 링크는 다른 사람에게 열리지 않아요. GitHub Pages 등에 배포한 주소에서 공유하세요 (README 참고).</div>` : ''}
-        <div class="sec"><h4>모두가 보는 기본 배치로 게시</h4><div class="note-box">회사 링크(첫 화면)에 이 배치를 띄우려면 <b>layout.json</b> 을 내려받아 GitHub 저장소 최상위에 올리면 돼요. 이후 링크를 여는 모든 사람의 기본 배치가 바뀝니다.</div>
-        <div style="display:flex;gap:6px;margin-top:10px"><button class="btn soft" id="dlLayout">${ic('download')}layout.json 내려받기</button><button class="btn soft" id="dlPng">${ic('image')}PNG 이미지</button></div></div>`,
+      body: liveSec + snapSec +
+        (local ? `<div class="note-box warn" style="margin-bottom:12px">지금은 PC 파일로 열려 있어서 이 링크는 다른 사람에게 열리지 않아요. 배포된 사이트 주소에서 공유하세요 (README 참고).</div>` : '') + tail,
       onOpen: (root) => {
-        const inp = $('#shareUrl', root);
-        $('#copyShare', root).onclick = async () => {
-          let ok = false;
-          try { await navigator.clipboard.writeText(url); ok = true; } catch (e) { inp.select(); try { ok = document.execCommand('copy'); } catch (er) { ok = false; } }
-          toast(ok ? '링크를 복사했어요' : '링크를 선택했어요 — Ctrl+C 로 복사하세요', { icon: 'link' });
-        };
-        inp.onclick = () => inp.select();
-        $('#dlLayout', root).onclick = () => exportJSON(true);
+        root.querySelectorAll('[data-copy]').forEach((btn) => {
+          btn.onclick = async () => {
+            const val = btn.getAttribute('data-copy'), inp = btn.previousElementSibling;
+            let ok = false;
+            try { await navigator.clipboard.writeText(val); ok = true; } catch (e) { inp.select(); try { ok = document.execCommand('copy'); } catch (er) { ok = false; } }
+            toast(ok ? '링크를 복사했어요' : '링크를 선택했어요 — Ctrl+C 로 복사하세요', { icon: 'link' });
+          };
+        });
+        root.querySelectorAll('.share-url .inp').forEach((inp) => { inp.onclick = () => inp.select(); });
+        const dl = $('#dlLayout', root); if (dl) dl.onclick = () => exportJSON(true);
+        const oh = $('#openHist', root); if (oh) oh.onclick = () => { closeModal(); openHistory(); };
         $('#dlPng', root).onclick = () => exportPNG();
       },
     });
@@ -2239,25 +2498,46 @@
   /* ---------------------------------------------------------- scenarios */
   function openScenarioMenu() {
     const b = $('#scnBtn').getBoundingClientRect();
-    const entries = [{ head: '시나리오 (이 브라우저에 저장)' }];
-    Object.values(store.scenarios).sort((a, c) => a.created - c.created).forEach((sc) => {
+    const entries = [];
+    const drafts = Object.values(store.scenarios).sort((a, c) => a.created - c.created);
+    if (live.on) {
+      entries.push({ head: '공용 · 모두에게 실시간 공유' });
+      entries.push({ label: '공용 배치 (실시간)', icon: isLive() ? 'check' : 'users', on: isLive(), fn: () => switchScenario(LIVE_ID) });
+      entries.push({ head: '내 초안 · 이 브라우저에만 저장' });
+      if (!drafts.length) entries.push({ label: '아직 초안이 없어요', icon: 'file', disabled: true });
+    } else entries.push({ head: '시나리오 (이 브라우저에 저장)' });
+    drafts.forEach((sc) => {
       entries.push({ label: sc.name, icon: sc.id === store.current && !state.shared ? 'check' : 'file', on: sc.id === store.current && !state.shared, fn: () => switchScenario(sc.id) });
     });
     entries.push('-');
-    entries.push({ label: '새 시나리오 (기본 배치에서)', icon: 'plus', fn: async () => { const n = await askText('새 시나리오', `배치안 ${Object.keys(store.scenarios).length + 1}`, '예: 개발팀 6인실 B안'); if (n) { const id = newScenario(n, baseDoc(), 'user'); persist(); switchScenario(id); setMode('edit'); } } });
-    entries.push({ label: '현재 시나리오 복제', icon: 'copy', fn: async () => { const n = await askText('시나리오 복제', currentName() + ' (복사본)'); if (n) { const id = newScenario(n, cloneDoc(state.doc), 'user'); persist(); switchScenario(id); } } });
-    if (!state.shared) {
+    const word = live.on ? '초안' : '시나리오';
+    entries.push({
+      label: live.on ? '새 초안 (공용 배치에서 시작)' : '새 시나리오 (기본 배치에서)', icon: 'plus',
+      fn: async () => { const n = await askText(`새 ${word}`, `배치안 ${drafts.length + 1}`, '예: 개발팀 6인실 B안'); if (n) { const id = newScenario(n, live.on ? cloneDoc(store.live.doc) : baseDoc(), 'user'); persist(); switchScenario(id); setMode('edit'); } },
+    });
+    entries.push({ label: `현재 배치를 ${word}으로 복제`, icon: 'copy', fn: async () => { const n = await askText(`${word} 복제`, (isLive() ? '공용 배치' : currentName()) + ' (복사본)'); if (n) { const id = newScenario(n, cloneDoc(state.doc), 'user'); persist(); switchScenario(id); } } });
+    if (live.on && !isLive() && !state.shared && store.scenarios[store.current]) entries.push({ label: '이 초안을 공용 배치에 반영', icon: 'upload', fn: publishDraft });
+    if (isLive()) {
+      entries.push({ label: '버전 기록 · 복원', icon: 'rotccw', fn: openHistory });
+      entries.push({ label: '공용 배치를 기본 배치로 초기화', icon: 'trash', danger: true, fn: async () => { if (await confirmBox('공용 배치 초기화', '공용 배치를 기본 배치(36석·16석)로 되돌릴까요?<br>모든 사람의 화면이 바뀌어요. 현재 상태는 버전 기록에 남겨 둬요.', '초기화')) { await snapshotNow('초기화 전 자동 기록'); mutate(() => { const d = baseDoc(); state.doc.items = d.items; state.doc.rooms = d.rooms; }); } } });
+    }
+    if (!state.shared && !isLive() && store.scenarios[store.current]) {
       entries.push({ label: '이름 변경', icon: 'edit', fn: async () => { const sc = store.scenarios[store.current]; const n = await askText('이름 변경', sc.name); if (n) { sc.name = n; persist(); $('#scnName').textContent = n; } } });
       entries.push({ label: '기본 배치로 되돌리기', icon: 'rotccw', fn: async () => { if (await confirmBox('기본 배치로 되돌리기', '현재 시나리오의 모든 변경을 지우고 기본 배치(36석·16석)로 되돌릴까요?<br>실행 취소로 되살릴 수 있어요.', '되돌리기')) { mutate(() => { const d = baseDoc(); state.doc.items = d.items; state.doc.rooms = d.rooms; state.doc.teams = d.teams.length ? d.teams : state.doc.teams; }); } } });
-      if (Object.keys(store.scenarios).length > 1) {
-        entries.push({ label: '현재 시나리오 삭제', icon: 'trash', danger: true, fn: async () => { if (await confirmBox('시나리오 삭제', `'${esc(currentName())}' 시나리오를 삭제할까요? 되돌릴 수 없어요.`, '삭제', true)) { delete store.scenarios[store.current]; const next = Object.keys(store.scenarios)[0]; persist(); switchScenario(next); } } });
+      if (live.on || Object.keys(store.scenarios).length > 1) {
+        entries.push({ label: `현재 ${word} 삭제`, icon: 'trash', danger: true, fn: async () => { if (await confirmBox(`${word} 삭제`, `'${esc(currentName())}' ${word}을 삭제할까요? 되돌릴 수 없어요.`, '삭제', true)) { delete store.scenarios[store.current]; const next = Object.keys(store.scenarios)[0] || LIVE_ID; persist(); switchScenario(next); } } });
       }
     }
     openMenu(b.left, b.bottom + 6, entries);
   }
   function openMoreMenu() {
     const b = $('#moreBtn').getBoundingClientRect();
-    openMenu(b.right - 250, b.bottom + 6, [
+    const liveItems = live.on ? [
+      { label: '공용 배치 버전 기록 · 복원', icon: 'rotccw', fn: openHistory },
+      { label: `편집자 이름: ${editorName()}`, icon: 'edit', fn: askEditorName },
+      '-',
+    ] : [];
+    openMenu(b.right - 250, b.bottom + 6, liveItems.concat([
       { label: 'PNG 이미지로 저장', icon: 'image', fn: exportPNG },
       { label: '배치 파일 내보내기 (.json)', icon: 'download', fn: () => exportJSON(false) },
       { label: '배치 파일 가져오기', icon: 'upload', fn: importJSON },
@@ -2266,7 +2546,7 @@
       { label: '임대차계약서 평면도 원본', icon: 'map', fn: openOrigPlan },
       { label: '현장 사진', icon: 'image', fn: () => openGallery() },
       { label: '단축키 · 사용법', icon: 'help', kbd: '?', fn: openHelp },
-    ]);
+    ]));
   }
 
   function renderBanner() {
@@ -2303,6 +2583,7 @@
     if (m !== 'edit' && state.sel.size > 1) { state.sel = new Set(); }
     store.mode = m; persist();
     renderAll();
+    if (m === 'edit' && isLive() && !store.editorName) setTimeout(askEditorName, 50);
   }
   function setTool(t) {
     state.tool = t;
@@ -2406,6 +2687,7 @@
     $('#zoomIn').onclick = () => zoomCenter(1.25);
     $('#zoomOut').onclick = () => zoomCenter(0.8);
     $('#zoomFit').onclick = () => fit(true);
+    $('#liveBadge').onclick = () => openHistory();
     $('#zoomVal').onclick = () => { const r = stageSize(), [cx, cy] = toWorld(r.left + r.w / 2, r.top + r.h / 2); animateView(1, r.w / 2 - cx, r.h / 2 - cy); };
     $('#undoBtn').onclick = undo; $('#redoBtn').onclick = redo;
     $('#shareBtn').onclick = openShare;
@@ -2434,16 +2716,30 @@
     bindUI();
     renderBase(); renderWalls();
     official = await loadOfficial();
-    ensureScenarios();
+    const liveOn = !!(window.FIREBASE_CONFIG && window.LiveSync) || /[?&](livemock|selftest=live)\b/.test(location.search);
+    ensureScenarios(liveOn);
+    if (liveOn) {
+      live.on = true;
+      if (!store.live || !store.live.doc) store.live = { doc: baseDoc(), base: null };
+      try { store.live.doc = normalizeDoc(store.live.doc); } catch (e) { store.live.doc = baseDoc(); }
+      if (store.live.base && store.live.base.doc) {
+        try { const bd = normalizeDoc(store.live.base.doc); live.base = { doc: bd, str: canon(bd), rev: store.live.base.rev || 0 }; } catch (e) { live.base = null; }
+      }
+      // 실시간이 처음 켜진 브라우저는 공용 배치를 기본 화면으로
+      if (!store.liveIntro) { store.liveIntro = true; store.current = LIVE_ID; }
+      if (store.current !== LIVE_ID && !store.scenarios[store.current]) store.current = LIVE_ID;
+      persist();
+    }
     const shared = await readShareHash();
     if (shared) {
       state.shared = { name: shared.name, doc: shared.doc, dirty: false };
       state.doc = shared.doc;
       $('#scnName').textContent = shared.name || '공유받은 배치안';
     } else {
-      state.doc = store.scenarios[store.current].doc;
-      $('#scnName').textContent = store.scenarios[store.current].name;
+      state.doc = scenarioDoc(store.current);
+      $('#scnName').textContent = currentName();
     }
+    if (liveOn) connectLive();
     setTab(state.mode === 'edit' ? 'items' : 'people');
     setMode(shared ? 'view' : (store.mode === 'edit' ? 'edit' : 'view'));
     if (state.mode === 'edit') setTab('items');
@@ -2454,7 +2750,7 @@
       store.seen = true; persist();
       setTimeout(() => toast('이름으로 자리를 찾거나, 편집 모드에서 배치를 시뮬레이션해 보세요', { icon: 'sparkles', ms: 6000 }), 600);
     }
-    window.__app = { state, store, api: { select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc, setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab, openCustomModal, openShare, openHelp, openGallery, newScenario, switchScenario, persist, baseDoc, setView: (k, x, y) => { const r = stageSize(); Object.assign(state.view, { k, tx: r.w / 2 - x * k, ty: r.h / 2 - y * k }); applyView(); } }, P, S };
+    window.__app = { state, store, api: { select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc, setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab, openCustomModal, openShare, openHelp, openGallery, newScenario, switchScenario, persist, baseDoc, merge3, canon, openHistory, publishDraft, restoreVersion, live: () => live, setView: (k, x, y) => { const r = stageSize(); Object.assign(state.view, { k, tx: r.w / 2 - x * k, ty: r.h / 2 - y * k }); applyView(); } }, P, S };
     document.documentElement.setAttribute('data-ready', '1');
     if (/[?&]selftest\b/.test(location.search)) { const sc = document.createElement('script'); sc.src = 'js/selftest.js'; document.body.appendChild(sc); }
   }

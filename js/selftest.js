@@ -32,6 +32,60 @@
     document.body.appendChild(pre);
     document.title = 'SAVETEST:' + (fails ? 'FAIL' : 'PASS');
   };
+  /* ---------- 실시간 동기화 검증 (가상 서버) : ?selftest=live ---------- */
+  if (/selftest=live/.test(location.search)) {
+    const srv = window.__memServer, L = api.live(), store = A.store;
+    const waitFor = async (cond, ms) => { const t0 = Date.now(); while (Date.now() - t0 < (ms || 3000)) { try { if (cond()) return true; } catch (e) { /* retry */ } await sleep(40); } return false; };
+    const sdoc = () => JSON.parse(srv.doc.data);
+    const sSeat = (d, x, y) => d.items.find((i) => i.x === x && i.y === y && S.def(i.type).seat);
+    try {
+      store.editorName = '테스터';
+      ok('L1 공용 배치(실시간)로 시작', store.current === 'live' && L.on);
+      ok('L2 빈 서버 → 기본 배치로 최초 생성', await waitFor(() => srv.doc && srv.doc.rev === 1));
+      ok('L3 상태 배지 "실시간"', await waitFor(() => L.status === 'live') && document.getElementById('liveBadge').textContent.includes('실시간'));
+      ok('L3b 최초 생성 버전 기록', srv.history.some((h) => h.note === '처음 생성'));
+      api.setMode('edit');
+      api.mutate(() => { seatAt(626, 80).name = '댄'; });
+      ok('L4 내 편집 → 서버 반영', await waitFor(() => sdoc().items.some((i) => i.name === '댄')), 'rev ' + srv.doc.rev);
+      ok('L4b 저장 표시 "실시간 저장됨"', await waitFor(() => document.querySelector('#saveState span').textContent === '실시간 저장됨'));
+      const d5 = sdoc(); sSeat(d5, 686, 80).name = '에이미'; srv.write(JSON.stringify(d5), '에이미');
+      ok('L5 다른 사람 편집 → 내 화면에 반영', await waitFor(() => items().some((i) => i.name === '에이미')));
+      ok('L5b 기존 내 편집 유지', items().some((i) => i.name === '댄'));
+      api.mutate(() => { seatAt(928, 140).name = '레오'; });
+      const d6 = sdoc(); d6.items = d6.items.filter((i) => !(i.x === 1558 && i.y === 500 && S.def(i.type).seat)); srv.write(JSON.stringify(d6), '하나');
+      ok('L6 동시 편집 병합 (내 이름 지정 + 남의 책상 삭제) → 내 화면', await waitFor(() => !seatAt(1558, 500) && items().some((i) => i.name === '레오')));
+      ok('L6b 동시 편집 병합 → 서버', await waitFor(() => { const d = sdoc(); return ['레오', '에이미', '댄'].every((n) => d.items.some((i) => i.name === n)) && !sSeat(d, 1558, 500); }));
+      const d7 = sdoc(); sSeat(d7, 1290, 80).name = '수아'; srv.write(JSON.stringify(d7), '수아', 'other', true); // 알림 없이 서버만 변경
+      api.mutate(() => { seatAt(298, 80).name = '민준'; });
+      ok('L7 모르는 사이 바뀐 서버와 충돌 → 트랜잭션 병합', await waitFor(() => { const d = sdoc(); return d.items.some((i) => i.name === '수아') && d.items.some((i) => i.name === '민준'); }));
+      ok('L7b 병합 결과가 내 화면에도', await waitFor(() => items().some((i) => i.name === '수아')));
+      const revBefore = srv.doc.rev;
+      const idD = api.newScenario('초안A', JSON.parse(JSON.stringify(store.live.doc)), 'user'); api.persist(); api.switchScenario(idD);
+      api.mutate(() => { seatAt(626, 220).name = '초안전용'; });
+      await sleep(900);
+      ok('L8 초안 편집은 서버에 영향 없음', srv.doc.rev === revBefore && !srv.doc.data.includes('초안전용'));
+      const d9 = sdoc(); sSeat(d9, 686, 220).name = '유나'; srv.write(JSON.stringify(d9), '유나');
+      ok('L9 초안 보는 중에도 공용 배치는 백그라운드 갱신', await waitFor(() => store.live.doc.items.some((i) => i.name === '유나')) && !items().some((i) => i.name === '유나'));
+      const pub = api.publishDraft(); await sleep(80);
+      document.querySelector('#modalRoot [data-act="1"]').click();
+      await pub;
+      ok('L10 초안을 공용 배치에 반영', await waitFor(() => store.current === 'live' && sdoc().items.some((i) => i.name === '초안전용')));
+      ok('L10b 반영 직전 상태 자동 기록', srv.history.some((h) => /반영 전/.test(h.note)));
+      const first = srv.history[srv.history.length - 1];
+      await api.restoreVersion(first);
+      ok('L11 버전 기록에서 복원', await waitFor(() => !sdoc().items.some((i) => i.name)) && !items().some((i) => i.name));
+      ok('L11b 복원 직전 상태 자동 기록', srv.history.some((h) => /복원 전/.test(h.note)));
+      srv.fail = true;
+      api.mutate(() => { seatAt(626, 80).name = '오프라인편집'; });
+      ok('L12 서버 오류 → 상태 "연결 오류", 로컬 보관', await waitFor(() => L.status === 'error') && store.live.doc.items.some((i) => i.name === '오프라인편집'));
+      srv.fail = false;
+      ok('L12b 복구되면 자동 재전송', await waitFor(() => sdoc().items.some((i) => i.name === '오프라인편집'), 9000));
+      ok('L13 버전 번호 순차 증가', srv.doc.rev > revBefore + 2, 'rev ' + srv.doc.rev);
+    } catch (e) { ok('실시간 검증 예외 없음', false, e && (e.stack || e.message)); }
+    showResult('LIVE');
+    return;
+  }
+
   if (/selftest=save1/.test(location.search)) {
     try {
       const store = A.store;
