@@ -13,6 +13,111 @@
   const key = (k, extra) => window.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ key: k, bubbles: true }, extra || {})));
   const svg = document.getElementById('plan');
 
+  /* ---------- 저장 검증: save1(편집) → save2(새로고침 후 확인) → save3(브라우저 재시작 후 확인) ---------- */
+  const seatAt = (x, y, tol) => items().find((i) => S.def(i.type).seat && Math.abs(i.x - x) <= (tol || 1) && Math.abs(i.y - y) <= (tol || 1));
+  const typeInto = async (sel, val, blur) => {
+    await raf();
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    el.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    el.value = val;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    if (blur) el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    return true;
+  };
+  const showResult = (title) => {
+    const pre = document.createElement('pre');
+    pre.id = 'selftest-out';
+    pre.textContent = `${title} ${fails ? 'FAILED ' + fails : 'ALL PASSED'}\n` + out.join('\n');
+    document.body.appendChild(pre);
+    document.title = 'SAVETEST:' + (fails ? 'FAIL' : 'PASS');
+  };
+  if (/selftest=save1/.test(location.search)) {
+    try {
+      const store = A.store;
+      ok('새 프로필: 시나리오 1개로 시작', Object.keys(store.scenarios).length === 1);
+      const origId = store.current;
+      api.setMode('edit');
+      // a) 인스펙터에서 이름 입력 (포커스 이동까지)
+      const dA = seatAt(626, 80);
+      api.select(dA.id);
+      ok('a) 이름 입력칸', await typeInto('#inspector [data-f="name"]', '저장테스트', true));
+      api.mutate(() => { st.doc.teams.push({ id: 'tQA', name: 'QA팀', color: '#10B981' }); dA.team = 'tQA'; });
+      // b) 드래그 이동
+      const dB = seatAt(1230, 80);
+      const el = st.els.get(dB.id), r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2, k = st.view.k;
+      pe('pointerdown', el.querySelector('rect'), cx, cy, { altKey: true });
+      for (let i = 1; i <= 5; i++) pe('pointermove', svg, cx + (i * 40 * k) / 5, cy, { altKey: true });
+      pe('pointerup', svg, cx + 40 * k, cy, { altKey: true });
+      ok('b) 드래그 이동 (스냅 없이)', Math.abs(dB.x - 1270) <= 2, dB.x + ',' + dB.y);
+      // c) 아이템 배치
+      api.startPlacing({ def: S.TYPES.sofa2 }, '2인 소파');
+      api.updateGhost(1231, 1013, true); api.placeNow(false);
+      ok('c) 소파 배치', inRoom('r6b').some((i) => i.type === 'sofa2'));
+      // d) 공간 이름 변경
+      api.selectRoom('r6a');
+      ok('d) 공간 이름 입력칸', await typeInto('#inspector [data-f="roomName"]', '테스트룸', true));
+      // e) 표시 설정 (그리드 끄기)
+      document.querySelector('[data-pref="grid"]').click();
+      ok('e) 그리드 끔', st.prefs.grid === false);
+      // f) 사용자 아이템 템플릿
+      api.openCustomModal(); await raf();
+      document.getElementById('cName').value = '택배함';
+      document.getElementById('cW').value = '60'; document.getElementById('cH').value = '40';
+      document.querySelector('#modalRoot [data-act="1"]').click();
+      await sleep(50); key('Escape');
+      ok('f) 내 아이템 저장', (store.customs || []).some((c) => c.name === '택배함'));
+      // g) 두 번째 시나리오 + 전환
+      const idB = api.newScenario('B안', api.baseDoc(), 'user'); api.persist(); api.switchScenario(idB);
+      api.mutate(() => { seatAt(626, 80).name = 'B안전용'; });
+      api.switchScenario(origId);
+      ok('g) 원래 시나리오로 복귀', store.current === origId && !!seatAt(626, 80) && seatAt(626, 80).name === '저장테스트');
+      await sleep(700); // 앞선 변경의 자동저장 타이머가 끝나도록
+      // h) 입력 도중(포커스 이동 없이) 바로 페이지 이동
+      const dH = seatAt(1558, 80);
+      api.select(dH.id);
+      ok('h) 마지막 입력', await typeInto('#inspector [data-f="name"]', '마지막입력', false));
+      out.push('→ 새로고침(페이지 이동) 후 save2 에서 확인');
+      sessionStorage.setItem('save1-log', out.join('\n') + `\n__fails=${fails}`);
+      location.href = location.pathname + '?selftest=save2';
+      return;
+    } catch (e) { ok('save1 예외 없음', false, e && (e.stack || e.message)); showResult('SAVE1'); return; }
+  }
+  if (/selftest=save[23]/.test(location.search)) {
+    const phase = /save2/.test(location.search) ? 'SAVE2 (새로고침 후)' : 'SAVE3 (브라우저 재시작 후)';
+    if (/save2/.test(location.search)) {
+      const prev = sessionStorage.getItem('save1-log') || '(save1 로그 없음)';
+      out.push('[save1]\n' + prev.replace(/\n__fails=\d+$/, ''));
+      const m = /__fails=(\d+)/.exec(prev); if (m) fails += +m[1];
+      out.push('[' + phase + ']');
+    }
+    try {
+      const store = A.store;
+      const scs = Object.values(store.scenarios);
+      ok('시나리오 2개 유지', scs.length === 2, scs.map((s) => s.name).join(', '));
+      ok('현재 시나리오 = 기본 배치안', store.scenarios[store.current].name === '기본 배치안');
+      ok('편집 모드 유지', st.mode === 'edit');
+      const dA = seatAt(626, 80);
+      ok('a) 이름 "저장테스트" 유지', dA && dA.name === '저장테스트', dA && dA.name);
+      ok('a) 팀 QA팀 유지', dA && dA.team === 'tQA' && st.doc.teams.some((t) => t.name === 'QA팀'));
+      ok('b) 드래그 이동 위치 유지', !!seatAt(1270, 80, 6) && !seatAt(1230, 80));
+      ok('c) 배치한 소파 유지', inRoom('r6b').some((i) => i.type === 'sofa2'));
+      ok('d) 공간 이름 "테스트룸" 유지', (st.doc.rooms.r6a || {}).name === '테스트룸');
+      ok('e) 그리드 꺼짐 유지', st.prefs.grid === false && document.querySelector('[data-pref="grid"]').checked === false && !document.querySelector('#L-grid rect'));
+      ok('f) 내 아이템 "택배함" 유지', (store.customs || []).some((c) => c.name === '택배함') && !!document.querySelector('.cat-card[data-custom]'));
+      const scB = scs.find((s) => s.name === 'B안');
+      ok('g) B안 시나리오 내용 유지', !!scB && scB.doc.items.some((i) => i.name === 'B안전용'));
+      ok('g) 기본안에는 B안 변경 없음', !items().some((i) => i.name === 'B안전용'));
+      const dH = seatAt(1558, 80);
+      ok('h) 입력 도중 이동해도 "마지막입력" 유지', dH && dH.name === '마지막입력', dH ? String(dH.name) : 'no desk');
+      ok('편집한 시나리오는 dirty 표시 (공식 배치 게시 시 덮어쓰지 않음)', store.scenarios[store.current].dirty === true);
+      ok('화면 표시: "저장됨"', document.querySelector('#saveState span').textContent === '저장됨');
+    } catch (e) { ok('검증 예외 없음', false, e && (e.stack || e.message)); }
+    showResult(phase);
+    return;
+  }
+
   if (/selftest=og/.test(location.search)) {
     // 링크 미리보기 이미지용: 기본 배치 그대로, 패널 숨김
     api.setMode('view'); st.sel.clear(); api.renderAll();

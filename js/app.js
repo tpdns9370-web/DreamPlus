@@ -236,11 +236,21 @@
     const el = $('#saveState');
     el.classList.add('saving'); el.querySelector('span').textContent = '저장 중…';
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      const ok = persist();
-      el.classList.remove('saving'); el.querySelector('span').textContent = ok ? '저장됨' : '저장 실패';
-    }, 350);
+    saveTimer = setTimeout(writeNow, 350);
   }
+  function writeNow() {
+    clearTimeout(saveTimer); saveTimer = 0;
+    const ok = persist();
+    const el = $('#saveState');
+    el.classList.remove('saving'); el.querySelector('span').textContent = ok ? '저장됨' : '저장 실패';
+  }
+  // 탭 닫기 · 새로고침 · 다른 앱 전환 시: 입력 중이던 내용 확정 + 대기 중인 저장 즉시 기록
+  function flushSave() {
+    if (hist.pending !== null && !drag) end();
+    if (saveTimer) writeNow();
+  }
+  window.addEventListener('pagehide', flushSave);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
   function savePrefs() { store.prefs = state.prefs; persist(); }
 
   function normalizeDoc(d) {
@@ -1704,6 +1714,8 @@
       else if (f === 'roomName' && state.selRoom) { const ov = state.doc.rooms[state.selRoom] = state.doc.rooms[state.selRoom] || {}; const v = e.target.value.trim(); if (v && v !== ROOM_BY_ID[state.selRoom].name) ov.name = v; else delete ov.name; renderRoomLabels(); }
       else if (f === 'roomNote' && state.selRoom) { const ov = state.doc.rooms[state.selRoom] = state.doc.rooms[state.selRoom] || {}; const v = e.target.value; if (v.trim()) ov.note = v; else delete ov.note; }
       else if (f === 'color' && it) { it.color = e.target.value; const elx = state.els.get(it.id); if (elx) elx.innerHTML = S.draw(it, null); }
+      // 입력하는 즉시 자동 저장 (포커스가 빠지기 전에 창을 닫아도 유지)
+      if (['name', 'note', 'roomName', 'roomNote', 'color'].includes(f)) scheduleSave();
     });
     el.addEventListener('focusout', (e) => {
       const f = e.target.getAttribute('data-f');
@@ -2442,7 +2454,7 @@
       store.seen = true; persist();
       setTimeout(() => toast('이름으로 자리를 찾거나, 편집 모드에서 배치를 시뮬레이션해 보세요', { icon: 'sparkles', ms: 6000 }), 600);
     }
-    window.__app = { state, store, api: { select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc, setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab, openCustomModal, openShare, openHelp, openGallery, setView: (k, x, y) => { const r = stageSize(); Object.assign(state.view, { k, tx: r.w / 2 - x * k, ty: r.h / 2 - y * k }); applyView(); } }, P, S };
+    window.__app = { state, store, api: { select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc, setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab, openCustomModal, openShare, openHelp, openGallery, newScenario, switchScenario, persist, baseDoc, setView: (k, x, y) => { const r = stageSize(); Object.assign(state.view, { k, tx: r.w / 2 - x * k, ty: r.h / 2 - y * k }); applyView(); } }, P, S };
     document.documentElement.setAttribute('data-ready', '1');
     if (/[?&]selftest\b/.test(location.search)) { const sc = document.createElement('script'); sc.src = 'js/selftest.js'; document.body.appendChild(sc); }
   }
