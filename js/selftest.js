@@ -140,12 +140,12 @@
   if (/selftest=fb/.test(location.search)) {
     const SV = A.server, store = A.store;
     try {
-      ok('F1 Firebase 연결', await waitFor(() => SV.status === 'online' && SV.ready, 15000), SV.status + ' ' + SV.err);
+      ok('F1 Firebase 연결', await waitFor(() => SV.status === 'online' && SV.ready, 30000), SV.status + ' ' + SV.err);
       const tag = '[자동 점검] ' + new Date().toISOString().slice(5, 16).replace('T', ' ');
       api.setMode('edit');
       api.mutate(() => { seatAt(626, 80).name = '점검'; });
       const t0 = Date.now();
-      ok('F2 서버에 새 시나리오 저장 (보안 규칙 통과)', await saveVia(tag, '자동 점검', 'over') === true, (Date.now() - t0) + 'ms');
+      ok('F2 서버에 새 시나리오 저장 (보안 규칙 통과)', await saveVia(tag, '자동 점검', 'over') === true && store.work.src && store.work.src.kind === 'server', (Date.now() - t0) + 'ms');
       const id = store.work.src && store.work.src.id;
       ok('F3 저장한 시나리오가 실시간 목록에 등장', await waitFor(() => SV.byId.has(id) && SV.byId.get(id).rev === 1, 10000));
       // 두 번째 접속자(별도 앱 인스턴스) 흉내 → 실시간 반영 확인
