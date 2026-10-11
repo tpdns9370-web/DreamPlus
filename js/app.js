@@ -606,7 +606,8 @@
       if (a.asNew || !src || src.kind !== 'server') {
         const r = await server.backend.create({ name: a.name, author: a.author, data });
         id = r.id; rev = r.rev;
-        if (!server.featuredId || !server.byId.has(server.featuredId)) server.backend.setFeatured(id).catch(() => {});
+        const feat = server.featuredId && server.byId.get(server.featuredId);
+        if (!feat || feat.deleted) server.backend.setFeatured(id).catch(() => {}); // 대표가 없거나 삭제됐으면 새 시나리오를 대표로
       } else {
         id = src.id;
         rev = (await server.backend.update(id, { name: a.name, author: a.author, data, note: '덮어쓰기 전 버전' }, a.force ? null : src.rev)).rev;

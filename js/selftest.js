@@ -131,6 +131,11 @@
       srv.fail = false;
       ok('S12b 복구 후 다시 저장', await saveVia('1안', '댄', 'over') === true && sDoc(idA).items.some((i) => i.name === '오프라인'));
       ok('S13 공유 창에 시나리오 링크(#sc=)', await (async () => { await api.openShare(); await sleep(30); const v = Array.from(document.querySelectorAll('#modalRoot .share-url .inp')).map((x) => x.value); document.querySelector('#modalRoot [data-close]').click(); return v.some((u) => u.includes('#sc=' + idA)); })());
+      await A.server.backend.update(idC, { deleted: true, note: '삭제 전' }, null);
+      await A.server.backend.setFeatured(idC);
+      await waitFor(() => SV.featuredId === idC && SV.byId.get(idC).deleted);
+      api.mutate(() => { seatAt(626, 220).name = '대표테스트'; });
+      ok('S14 대표가 삭제된 상태면 새로 저장한 시나리오가 대표로', await saveVia('4안', '댄', 'asNew') === true && await waitFor(() => src().name === '4안' && SV.featuredId === src().id));
     } catch (e) { ok('서버 검증 예외 없음', false, e && (e.stack || e.message)); }
     showResult('SERVER');
     return;
