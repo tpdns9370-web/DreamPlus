@@ -102,6 +102,7 @@
     placing: null, measures: [], highlight: null, guides: [], dists: [], pulse: null,
     warnings: { ids: new Set(), list: [] }, stats: {},
     clipboard: null, shared: null, lastWorld: null,
+    roster: { teams: [], members: [], rev: 0, byId: new Map(), teamById: new Map() },
   };
   const ROOMS = P.ROOMS;
   const ROOM_BY_ID = Object.fromEntries(ROOMS.map((r) => [r.id, r]));
@@ -131,7 +132,7 @@
   }
   const surfaceAt = (x, y) => { const arr = state.doc.items.filter((s) => isSurface(s) && pointOn(s, x, y)); return arr[arr.length - 1] || null; };
   const typeName = (it) => (it.type === 'custom' ? '사용자 아이템' : def(it).name);
-  const teamOf = (id) => (id && state.doc.teams.find((t) => t.id === id)) || null;
+  const teamOf = (id) => (id && ((state.roster && state.roster.teamById.get(id)) || ((state.doc && state.doc.teams) || []).find((t) => t.id === id))) || null;
   const teamColor = (id) => { const t = teamOf(id); return t ? t.color : null; };
   const roomName = (r) => (state.doc.rooms[r.id] && state.doc.rooms[r.id].name) || r.name;
   const roomPurpose = (r) => (state.doc.rooms[r.id] && state.doc.rooms[r.id].purpose) || r.purpose;
@@ -289,7 +290,7 @@
         id: String(it.id || nid()), type: String(it.type),
         x: +it.x || 0, y: +it.y || 0, w: +it.w || dd.w, h: +it.h || dd.h, rot: norm(+it.rot || 0),
       };
-      ['name', 'team', 'note', 'color', 'shape', 'group'].forEach((k) => { if (it[k]) n[k] = String(it[k]).slice(0, 200); });
+      ['name', 'team', 'note', 'color', 'shape', 'group', 'member'].forEach((k) => { if (it[k]) n[k] = String(it[k]).slice(0, 200); });
       if (it.locked) n.locked = true;
       if (it.floor) n.floor = true;
       out.push(n);
@@ -374,6 +375,7 @@
   }
 
   /* ============================================================ 시나리오 (서버 저장소) */
+  const ROSTER_ID = 'team-roster'; // 구성원 명단은 scenarios 컬렉션의 이 문서에 보관 (기존 보안 규칙 그대로 사용)
   const server = { on: false, backend: null, status: 'off', err: '', list: [], byId: new Map(), featuredId: '', gotList: false, gotConfig: false, ready: false, saving: false };
   const visibleList = () => server.list.filter((s) => !s.deleted);
   const srvUid = () => (server.backend ? server.backend.uid() : null);
@@ -444,7 +446,10 @@
     const ready = () => { if (!server.ready && server.gotList && server.gotConfig) { server.ready = true; initialOpen(); } };
     try {
       server.backend = mock ? window.LiveSync.memory() : await window.LiveSync.firebase(window.FIREBASE_CONFIG);
-      server.backend.listen((list) => {
+      server.backend.listen((all) => {
+        const rosterDoc = all.find((s) => s.id === ROSTER_ID);
+        const list = all.filter((s) => s.id !== ROSTER_ID);
+        if (rosterDoc) onServerRoster(rosterDoc);
         server.list = list; server.byId = new Map(list.map((s) => [s.id, s]));
         server.gotList = true;
         setServerStatus('online');
@@ -587,6 +592,7 @@
   }
   async function doSave(a) {
     if (hist.pending !== null) end();
+    state.doc.items.forEach((it) => { const m = it.member && memberById(it.member); if (m && it.name !== m.name) it.name = m.name; });
     const doc = cloneDoc(state.doc), docStr = canon(doc), data = JSON.stringify(doc);
     store.authorName = a.author; persist();
     const src = workSrc();
@@ -955,16 +961,16 @@
   function isDimmed(it) {
     const h = state.highlight;
     if (!h) return false;
-    if (h.kind === 'team') return !(it.team === h.id || (isChair(it) && it.group && state.doc.items.some((x) => x.group === it.group && x.team === h.id)));
+    if (h.kind === 'team') return !(teamIdOf(it) === h.id || (isChair(it) && it.group && state.doc.items.some((x) => x.group === it.group && isSeat(x) && teamIdOf(x) === h.id)));
     if (h.kind === 'vacant') {
-      if (isSeat(it)) return !!it.name;
-      if (isChair(it) && it.group) { const d = state.doc.items.find((x) => x.group === it.group && isSeat(x)); return d ? !!d.name : true; }
+      if (isSeat(it)) return !!nameOf(it);
+      if (isChair(it) && it.group) { const d = state.doc.items.find((x) => x.group === it.group && isSeat(x)); return d ? !!nameOf(d) : true; }
       return true;
     }
     return false;
   }
   function itemMarkup(it) {
-    const accent = isSeat(it) ? teamColor(it.team) : null;
+    const accent = isSeat(it) ? teamColor(teamIdOf(it)) : null;
     const cls = 'it' + (it.locked ? ' locked' : '') + (isDimmed(it) ? ' dim' : '');
     return `<g class="${cls}" data-id="${it.id}" transform="translate(${r1(it.x)} ${r1(it.y)}) rotate(${r1(it.rot || 0)})">${S.draw(it, accent)}</g>`;
   }
@@ -988,16 +994,17 @@
     const hits = state.searchHits || new Set();
     let s = '';
     state.doc.items.forEach((it) => {
-      if (!it.name) return;
+      const full = nameOf(it);
+      if (!full) return;
       const person = isSeat(it) || isChair(it);
       const [ax, ay] = person ? seatAnchor(it) : [it.x, it.y];
       const cls = 'lbl ' + (person ? 'person' : 'tag') + (state.sel.has(it.id) ? ' sel' : '') + (hits.has(it.id) ? ' hit' : '') + (isDimmed(it) ? ' dim' : '');
-      const name = it.name.length > 14 ? it.name.slice(0, 13) + '…' : it.name;
+      const name = full.length > 14 ? full.slice(0, 13) + '…' : full;
       if (person) {
         const tw = textW(name, '650 12px');
         const w = 22 + tw + 9, x0 = -w / 2;
-        const col = teamColor(it.team) || '#4F46E5';
-        const ini = esc(Array.from(it.name.trim())[0] || '?').toUpperCase();
+        const col = teamColor(teamIdOf(it)) || '#4F46E5';
+        const ini = esc(Array.from(full.trim())[0] || '?').toUpperCase();
         s += `<g class="${cls}" transform="translate(${r1(ax)} ${r1(ay)}) scale(${scs})">` +
           `<rect class="pill" x="${r1(x0)}" y="-10.5" width="${r1(w)}" height="21" rx="10.5"/>` +
           `<circle cx="${r1(x0 + 10.5)}" cy="0" r="8" fill="${col}"/>` +
@@ -1021,10 +1028,10 @@
     state.doc.items.forEach((it) => {
       if (isArch(it)) return;
       const r = itemRoom(it);
-      if (isSeat(it)) { desks++; if (it.name) named++; }
+      if (isSeat(it)) { desks++; if (nameOf(it)) named++; }
       if (!r) return;
       st[r.id].items++;
-      if (isSeat(it)) { st[r.id].desks++; if (it.name) st[r.id].named++; }
+      if (isSeat(it)) { st[r.id].desks++; if (nameOf(it)) st[r.id].named++; }
     });
     state.stats = st; state.totals = { desks, named };
   }
@@ -1566,7 +1573,7 @@
         const [cx, cy] = rotVec((x0 + x1) / 2, (y0 + y1) / 2, s.rot);
         it.x = r1(s.x + cx); it.y = r1(s.y + cy);
         const el = state.els.get(it.id);
-        if (el) { el.innerHTML = S.draw(it, isSeat(it) ? teamColor(it.team) : null); setItemTransform(it); }
+        if (el) { el.innerHTML = S.draw(it, isSeat(it) ? teamColor(teamIdOf(it)) : null); setItemTransform(it); }
         liveUpdate();
         break;
       }
@@ -1653,9 +1660,9 @@
   function showTooltipFor(it, x, y) {
     if (!it) return hideTooltip();
     const t = $('#tooltip');
-    const r = itemRoom(it), tm = teamOf(it.team);
+    const r = itemRoom(it), tm = teamOf(teamIdOf(it));
     const sub = [typeName(it), `${Math.round(it.w)}×${Math.round(it.h)}cm`, r ? roomName(r) : '', tm ? tm.name : ''].filter(Boolean).join(' · ');
-    t.innerHTML = `<b>${esc(it.name || typeName(it))}</b>${it.locked ? ' 🔒' : ''}<small>${esc(sub)}</small>${it.note ? `<small>📝 ${esc(it.note)}</small>` : ''}`;
+    t.innerHTML = `<b>${esc(nameOf(it) || typeName(it))}</b>${it.locked ? ' 🔒' : ''}<small>${esc(sub)}</small>${it.note ? `<small>📝 ${esc(it.note)}</small>` : ''}`;
     t.hidden = false;
     const tw = t.offsetWidth, th = t.offsetHeight;
     t.style.left = clamp(x + 14, 4, window.innerWidth - tw - 4) + 'px';
@@ -1961,7 +1968,7 @@
     return `<div class="numf${lbl ? ' lbl' : ''}">${lbl ? `<label>${lbl}</label>` : ''}<input class="inp" type="number" step="1" data-f="${f}" value="${r1(val)}">${unit ? `<em>${unit}</em>` : ''}</div>`;
   }
   function teamSelect(cur, f) {
-    return `<select data-f="${f || 'team'}"><option value="">팀 없음</option>${state.doc.teams.map((t) => `<option value="${t.id}"${t.id === cur ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}<option value="__new">+ 새 팀 만들기…</option></select>`;
+    return `<select data-f="${f || 'team'}"><option value="">팀 없음</option>${allTeams().map((t) => `<option value="${t.id}"${t.id === cur ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}<option value="__new">+ 새 팀 만들기…</option></select>`;
   }
   function renderInspector() {
     const el = $('#inspector');
@@ -1998,7 +2005,7 @@
       s += `<div class="sec"><h4>확인 필요 <span>${state.warnings.list.length}건</span></h4><div class="warn-list">`;
       state.warnings.list.slice(0, 8).forEach((w) => {
         const a = state.idx.get(w.a), b = w.b ? state.idx.get(w.b) : null;
-        const nm = (x) => (x ? x.name || typeName(x) : '');
+        const nm = (x) => (x ? nameOf(x) || typeName(x) : '');
         const msg = w.kind === 'overlap' ? `${nm(a)} ↔ ${nm(b)} 겹침` : w.kind === 'wall' ? `${nm(a)} 벽에 걸침` : `${nm(a)} 전용공간 밖`;
         s += `<button class="warn-row" data-go="${w.a}">${ic('alert')}${esc(msg)}</button>`;
       });
@@ -2019,19 +2026,29 @@
     const edit = state.mode === 'edit';
     const grp = items.length > 1;
     const it = grp ? primaryOf(items) : items[0];
-    const d = def(it), r = itemRoom(it), tm = teamOf(it.team);
+    const d = def(it), r = itemRoom(it), tm = teamOf(teamIdOf(it));
     const person = isSeat(it) || isChair(it);
-    let s = `<div class="ins-head"><div class="ins-thumb">${S.thumb(Object.assign({}, d, { w: it.w, h: it.h, color: it.color, shape: it.shape, type: it.type, set: null }), 56, 46)}</div><div class="ins-title"><div class="eyebrow">${grp ? ic('group') + '그룹 · ' + items.length + '개' : esc(d.cat === 'custom' ? '사용자 아이템' : (S.CATALOG.find((c) => c.cat === d.cat) || { label: '' }).label)}</div><h3>${esc(it.name || typeName(it))}</h3><p>${esc(typeName(it))} · ${Math.round(it.w)}×${Math.round(it.h)}cm${r ? ' · ' + esc(roomName(r)) : ''}</p></div></div>`;
+    let s = `<div class="ins-head"><div class="ins-thumb">${S.thumb(Object.assign({}, d, { w: it.w, h: it.h, color: it.color, shape: it.shape, type: it.type, set: null }), 56, 46)}</div><div class="ins-title"><div class="eyebrow">${grp ? ic('group') + '그룹 · ' + items.length + '개' : esc(d.cat === 'custom' ? '사용자 아이템' : (S.CATALOG.find((c) => c.cat === d.cat) || { label: '' }).label)}</div><h3>${esc(nameOf(it) || typeName(it))}</h3><p>${esc(typeName(it))} · ${Math.round(it.w)}×${Math.round(it.h)}cm${r ? ' · ' + esc(roomName(r)) : ''}</p></div></div>`;
     if (!edit) {
-      s += `<div class="sec"><dl class="kv"><dt>이름</dt><dd>${esc(it.name || '—')}</dd><dt>팀</dt><dd>${tm ? `<span class="chip"><span class="d" style="background:${tm.color}"></span>${esc(tm.name)}</span>` : '—'}</dd><dt>공간</dt><dd>${r ? esc(roomName(r)) + ' · ' + r.no : '—'}</dd><dt>크기</dt><dd>${Math.round(it.w)} × ${Math.round(it.h)} cm</dd></dl>${it.note ? `<div class="note-box" style="margin-top:10px">${esc(it.note)}</div>` : ''}</div>`;
+      s += `<div class="sec"><dl class="kv"><dt>이름</dt><dd>${esc(nameOf(it) || '—')}</dd><dt>팀</dt><dd>${tm ? `<span class="chip"><span class="d" style="background:${tm.color}"></span>${esc(tm.name)}</span>` : '—'}</dd><dt>공간</dt><dd>${r ? esc(roomName(r)) + ' · ' + r.no : '—'}</dd><dt>크기</dt><dd>${Math.round(it.w)} × ${Math.round(it.h)} cm</dd></dl>${it.note ? `<div class="note-box" style="margin-top:10px">${esc(it.note)}</div>` : ''}</div>`;
       s += `<div class="sec"><button class="btn soft wide" data-cmd="fly">${ic('target')}이 위치로 확대</button></div>`;
       return s;
     }
-    s += `<div class="sec"><label class="fld"><span>${person ? '이 자리 사용자' : '이름표'}</span><input class="inp name-inp" data-f="name" value="${esc(it.name || '')}" placeholder="${person ? '예: 댄' : '도면에 표시할 이름'}" maxlength="40" autocomplete="off"></label>`;
-    s += `<div class="grid2"><label class="fld"><span>팀</span>${teamSelect(it.team)}</label><label class="fld"><span>공간</span><input class="inp" value="${r ? esc(roomName(r)) : '전용공간 밖'}" disabled></label></div>`;
+    const roomBox = `<label class="fld"><span>공간</span><input class="inp" value="${r ? esc(roomName(r)) : '전용공간 밖'}" disabled></label>`;
+    if (isSeat(it)) {
+      // 책상: 구성원 명단에서 선택
+      const m = it.member ? memberById(it.member) : null;
+      s += `<div class="sec"><label class="fld"><span>이 자리 사용자 <small class="lbl-sub">구성원 명단에서 선택</small></span>${memberSelect(it)}</label>`;
+      s += m
+        ? `<div class="grid2"><div class="fld"><span>팀</span><div class="team-ro">${tm ? `<span class="chip"><span class="d" style="background:${tm.color}"></span>${esc(tm.name)}</span>` : '<span class="chip">팀 미지정</span>'}<small>명단 기준</small></div></div>${roomBox}</div>`
+        : `<div class="grid2"><label class="fld"><span>팀</span>${teamSelect(it.team)}</label>${roomBox}</div>`;
+    } else {
+      s += `<div class="sec"><label class="fld"><span>${person ? '이 자리 사용자' : '이름표'}</span><input class="inp name-inp" data-f="name" value="${esc(it.name || '')}" placeholder="${person ? '예: 댄' : '도면에 표시할 이름'}" maxlength="40" autocomplete="off"></label>`;
+      s += `<div class="grid2"><label class="fld"><span>팀</span>${teamSelect(it.team)}</label>${roomBox}</div>`;
+    }
     s += `<label class="fld"><span>메모</span><textarea class="inp" data-f="note" rows="2" placeholder="예: 모니터 2대, 창가 선호">${esc(it.note || '')}</textarea></label></div>`;
     if (grp) {
-      s += `<div class="sec"><h4>그룹 구성</h4><div style="display:flex;flex-wrap:wrap;gap:6px">${items.map((x) => `<button class="chip" data-pick="${x.id}" style="cursor:pointer">${esc(x.name || typeName(x))}</button>`).join('')}</div><p class="hint" style="margin-top:8px">항목을 눌러 개별 선택 · 도면에서 한 번 더 클릭해도 개별 선택돼요</p></div>`;
+      s += `<div class="sec"><h4>그룹 구성</h4><div style="display:flex;flex-wrap:wrap;gap:6px">${items.map((x) => `<button class="chip" data-pick="${x.id}" style="cursor:pointer">${esc(nameOf(x) || typeName(x))}</button>`).join('')}</div><p class="hint" style="margin-top:8px">항목을 눌러 개별 선택 · 도면에서 한 번 더 클릭해도 개별 선택돼요</p></div>`;
       s += `<div class="sec"><h4>회전</h4><div class="rot-row"><button class="btn soft sm" data-cmd="rot-90">${ic('rotccw')}-90°</button><button class="btn soft sm" data-cmd="rot90">${ic('rotcw')}+90°</button><button class="btn soft sm" data-cmd="rot180">180°</button></div></div>`;
     } else {
       s += `<div class="sec"><h4>크기 · 위치 ${it.locked ? '<span class="chip lock">' + ic('lock') + '잠김</span>' : ''}</h4><div class="grid2" style="margin-bottom:8px">${fieldNum('w', it.w, 'cm', 'W')}${fieldNum('h', it.h, 'cm', 'H')}</div><div class="grid2" style="margin-bottom:8px">${fieldNum('x', it.x, 'cm', 'X')}${fieldNum('y', it.y, 'cm', 'Y')}</div>`;
@@ -2062,8 +2079,10 @@
       ['L', 'CH', 'R', 'distH', 'T', 'CV', 'B', 'distV'].map((m) => `<button class="act" data-align="${m}" title="${{ L: '왼쪽 정렬', CH: '가로 가운데', R: '오른쪽 정렬', T: '위쪽 정렬', CV: '세로 가운데', B: '아래쪽 정렬', distH: '가로 균등 분배', distV: '세로 균등 분배' }[m]}">${ic(m.startsWith('dist') ? m : 'align' + m)}${{ L: '왼쪽', CH: '가운데', R: '오른쪽', T: '위', CV: '중앙', B: '아래', distH: '가로분배', distV: '세로분배' }[m]}</button>`).join('') + '</div></div>';
     s += `<div class="sec"><h4>회전</h4><div class="rot-row"><button class="btn soft sm" data-cmd="rot-90">${ic('rotccw')}-90°</button><button class="btn soft sm" data-cmd="rot90">${ic('rotcw')}+90°</button><button class="btn soft sm" data-cmd="rot180">180°</button></div></div>`;
     if (seats.length) {
-      s += `<div class="sec bulk"><h4>자리 ${seats.length}개 · 일괄 지정</h4><label class="fld"><span>팀 일괄 지정</span>${teamSelect('', 'bulkTeam')}</label>` +
-        `<label class="fld"><span>이름 일괄 입력 (한 줄에 한 명, 또는 쉼표 구분)</span><textarea class="inp" id="bulkNames" rows="4" placeholder="댄&#10;에이미&#10;레오"></textarea></label>` +
+      const teamFill = state.roster.teams.length ? `<label class="fld"><span>팀으로 채우기 <small class="lbl-sub">자리 없는 팀원을 빈 책상에 차례로</small></span><select data-f="teamFill"><option value="">팀 선택…</option>${state.roster.teams.map((t) => { const n = state.roster.members.filter((m) => m.team === t.id && !seatOfMember(m.id)).length; return `<option value="${t.id}"${n ? '' : ' disabled'}>${esc(t.name)} · 자리 없는 ${n}명</option>`; }).join('')}</select></label>` : '';
+      s += `<div class="sec bulk"><h4>자리 ${seats.length}개 · 일괄 지정</h4>${teamFill}` +
+        `<label class="fld"><span>이름 일괄 입력 (한 줄에 한 명, 또는 쉼표 구분)</span><textarea class="inp" id="bulkNames" rows="4" placeholder="댄&#10;헤시&#10;졸리"></textarea></label>` +
+        `<label class="fld" style="margin-top:-4px"><span></span><button class="btn soft sm" data-cmd="bulkClear">선택한 자리 모두 비우기</button></label>` +
         `<div class="grid2"><select id="bulkOrder"><option value="row">위 → 아래 순서</option><option value="col">왼 → 오른 순서</option></select><button class="btn primary" data-cmd="bulkNames">자리 순서대로 지정</button></div></div>`;
     }
     s += `<div class="sec"><div class="actions">` +
@@ -2128,7 +2147,7 @@
         roomFly: () => flyToRoom(ROOM_BY_ID[state.selRoom]),
         roomClear: () => clearRoom(state.selRoom),
         roomSelectAll: () => { const id = state.selRoom; state.sel = new Set(state.doc.items.filter((i) => !i.locked && itemRoom(i) && itemRoom(i).id === id).map((i) => i.id)); state.selRoom = null; onSelectionChange(); },
-        bulkNames,
+        bulkNames, bulkClear,
       }[cmd] || (() => {}))();
     });
     el.addEventListener('focusin', (e) => { const f = e.target.getAttribute('data-f'); if (f === 'name' || f === 'note' || f === 'roomName' || f === 'roomNote' || f === 'color') begin(); });
@@ -2156,6 +2175,18 @@
       const items = selItems();
       const it = items.length > 1 ? primaryOf(items) : items[0];
       if (!f) return;
+      if (f === 'member' && it) {
+        const v = e.target.value;
+        if (v === '__keep') return;
+        if (v === '__custom') {
+          askText('명단에 없는 이름', it.member ? '' : (it.name || ''), '예: 방문자, 인턴(예정)').then((n) => { if (n) mutate(() => { delete it.member; it.name = n.slice(0, 40); }); else renderInspector(); });
+          return;
+        }
+        if (v === '__new') { const id = it.id; openMemberDialog(null, (m) => assignMember(id, m.id)); renderInspector(); return; }
+        assignMember(it.id, v || null);
+        return;
+      }
+      if (f === 'teamFill') { if (e.target.value) fillSeatsWithTeam(e.target.value); return; }
       if (f === 'team' || f === 'bulkTeam') {
         const v = e.target.value;
         const targets = f === 'bulkTeam' ? items.filter(isSeat) : [it];
@@ -2186,56 +2217,189 @@
     const order = ($('#bulkOrder') || {}).value || 'row';
     const seats = selItems().filter(isSeat).map((it) => ({ it, p: seatAnchor(it) }));
     seats.sort((a, b) => (order === 'row' ? (Math.round(a.p[1] / 40) - Math.round(b.p[1] / 40)) || a.p[0] - b.p[0] : (Math.round(a.p[0] / 40) - Math.round(b.p[0] / 40)) || a.p[1] - b.p[1]));
-    mutate(() => seats.forEach((s, i) => { if (names[i]) s.it.name = names[i].slice(0, 40); }));
-    toast(`${Math.min(names.length, seats.length)}명 지정 완료${names.length > seats.length ? ` · ${names.length - seats.length}명은 자리가 부족해요` : ''}`, { icon: 'users' });
+    let matched = 0;
+    mutate(() => seats.forEach((s, i) => {
+      const n = names[i];
+      if (!n) return;
+      const m = state.roster.members.find((x) => x.name === n);
+      if (m) { // 명단에 있으면 연결 (다른 자리에 있던 경우 그 자리는 비움)
+        state.doc.items.forEach((x) => { if (x !== s.it && x.member === m.id) { delete x.member; delete x.name; delete x.team; } });
+        s.it.member = m.id; s.it.name = m.name; delete s.it.team; matched++;
+      } else { delete s.it.member; s.it.name = n.slice(0, 40); }
+    }));
+    const k = Math.min(names.length, seats.length);
+    toast(`${k}명 지정 완료${k - matched ? ` · 명단에 없는 이름 ${k - matched}개` : ''}${names.length > seats.length ? ` · ${names.length - seats.length}명은 자리가 부족해요` : ''}`, { icon: 'users', ms: 3200 });
+  }
+  function orderedSeats(items) {
+    const order = ($('#bulkOrder') || {}).value || 'row';
+    const seats = items.filter(isSeat).map((it) => ({ it, p: seatAnchor(it) }));
+    seats.sort((a, b) => (order === 'row' ? (Math.round(a.p[1] / 40) - Math.round(b.p[1] / 40)) || a.p[0] - b.p[0] : (Math.round(a.p[0] / 40) - Math.round(b.p[0] / 40)) || a.p[1] - b.p[1]));
+    return seats.map((x) => x.it);
+  }
+  /** 선택한 빈 책상에 그 팀의 '자리 없는' 팀원을 차례로 앉힌다 */
+  function fillSeatsWithTeam(teamId) {
+    const t = state.roster.teamById.get(teamId);
+    const free = orderedSeats(selItems()).filter((d) => !nameOf(d));
+    const ms = state.roster.members.filter((m) => m.team === teamId && !seatOfMember(m.id));
+    if (!free.length) { toast('선택한 책상 중 빈 자리가 없어요', { icon: 'info' }); return; }
+    if (!ms.length) { toast(`${t ? t.name : '이 팀'}은(는) 모두 자리가 있어요`, { icon: 'info' }); return; }
+    const n = Math.min(free.length, ms.length);
+    mutate(() => { for (let i = 0; i < n; i++) { free[i].member = ms[i].id; free[i].name = ms[i].name; delete free[i].team; } });
+    toast(`${t.name} ${n}명 자리 지정${ms.length > n ? ` · ${ms.length - n}명은 빈 자리가 부족해요` : ''}`, { icon: 'users', ms: 3000 });
+  }
+  function bulkClear() {
+    const seats = selItems().filter((d) => isSeat(d) && (d.member || d.name || d.team));
+    if (!seats.length) return;
+    mutate(() => seats.forEach((d) => { delete d.member; delete d.name; delete d.team; }));
+    toast(`${seats.length}개 자리를 비웠어요`, { icon: 'x', action: { label: '실행 취소', fn: undo } });
   }
 
-  /* ---------------------------------------------------------- people & teams */
-  function people() {
-    return state.doc.items.filter((it) => it.name && (isSeat(it) || isChair(it)));
+  /* ---------------------------------------------------------- 구성원 명단 (모든 시나리오 공용) */
+  // 책상에는 구성원 id 만 연결하고, 이름·팀은 명단에서 그때그때 찾아 보여 준다.
+  // → 명단에서 이름·팀을 바꾸면 모든 시나리오의 자리 표시가 함께 바뀐다.
+  function setRoster(r, rev) {
+    const teams = (r && Array.isArray(r.teams) ? r.teams : []).filter((t) => t && t.id && t.name)
+      .map((t) => ({ id: String(t.id), name: String(t.name).trim().slice(0, 30), color: /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : TEAM_COLORS[0] }));
+    const tids = new Set(teams.map((t) => t.id));
+    const members = (r && Array.isArray(r.members) ? r.members : []).filter((m) => m && m.id && m.name)
+      .map((m) => ({ id: String(m.id), name: String(m.name).trim().slice(0, 30), team: tids.has(m.team) ? m.team : '' }));
+    state.roster = { teams, members, rev: rev || 0, byId: new Map(members.map((m) => [m.id, m])), teamById: new Map(teams.map((t) => [t.id, t])) };
+    store.roster = { teams, members, rev: rev || 0 };
+    persist();
   }
+  const rosterData = () => ({ v: 1, teams: state.roster.teams, members: state.roster.members });
+  const memberById = (id) => (id && state.roster.byId.get(id)) || null;
+  function nameOf(it) { const m = it.member ? memberById(it.member) : null; return m ? m.name : (it.name || ''); }
+  function teamIdOf(it) { const m = it.member ? memberById(it.member) : null; return m ? (m.team || '') : (it.team || ''); }
+  const allTeams = () => (state.roster.teams.length ? state.roster.teams : (state.doc && state.doc.teams) || []);
+  const seatOfMember = (id) => state.doc.items.find((it) => it.member === id && isSeat(it)) || state.doc.items.find((it) => it.member === id) || null;
+  const seatDesk = (it) => (isSeat(it) ? it : isChair(it) && it.group ? state.doc.items.find((x) => x.group === it.group && isSeat(x)) || null : null);
+  const rosterModalOpen = () => !!document.getElementById('teamMgr');
+  function onServerRoster(sc) {
+    if (!sc || sc.rev === state.roster.rev) return;
+    try { setRoster(JSON.parse(sc.data), sc.rev); } catch (e) { return; }
+    rosterChanged();
+  }
+  function rosterChanged() { renderAll(); if (rosterModalOpen()) renderTeamMgr(); }
+  /** 명단 변경: fn(명단 사본) → 새 명단. 서버에서는 '최신' 명단에 적용되므로 여러 사람이 동시에 고쳐도 안전 */
+  async function editRoster(fn, okMsg) {
+    const apply = (base) => { const r = JSON.parse(JSON.stringify(base || { v: 1, teams: [], members: [] })); return fn(r) || r; };
+    const online = server.on && server.status === 'online' && !!server.backend;
+    const prev = rosterData(), prevRev = state.roster.rev;
+    setRoster(apply(prev), prevRev);
+    rosterChanged();
+    if (!online) { if (okMsg) toast(okMsg + (server.on ? ' · 서버 연결 안 됨 (이 브라우저에만)' : ''), { icon: 'users' }); return true; }
+    try {
+      const res = await server.backend.rosterCommit((cur) => apply(cur), { author: store.authorName || '' });
+      setRoster(JSON.parse(res.data), res.rev);
+      rosterChanged();
+      if (okMsg) toast(okMsg, { icon: 'users' });
+      return true;
+    } catch (e) {
+      setRoster(prev, prevRev); rosterChanged();
+      toast('구성원 명단을 저장하지 못했어요: ' + ((e && e.message) || e), { err: true, icon: 'alert', ms: 5000 });
+      return false;
+    }
+  }
+  const nextTeamColor = (teams) => { const used = new Set(teams.map((t) => t.color)); return TEAM_COLORS.find((c) => !used.has(c)) || TEAM_COLORS[teams.length % TEAM_COLORS.length]; };
+
+  /** 책상에 구성원 지정 (같은 사람이 다른 자리에 있으면 그 자리는 비운다) */
+  function assignMember(deskId, memberId) {
+    const desk = state.idx.get(deskId);
+    if (!desk) return;
+    const m = memberById(memberId);
+    let moved = false;
+    mutate(() => {
+      if (m) {
+        state.doc.items.forEach((x) => { if (x.id !== desk.id && x.member === m.id) { moved = true; delete x.member; delete x.name; delete x.team; } });
+        desk.member = m.id; desk.name = m.name; delete desk.team;
+      } else { delete desk.member; delete desk.name; delete desk.team; }
+    });
+    if (m) toast(moved ? `${m.name} 님 자리를 옮겼어요 · 이전 자리는 비웠어요` : `${m.name} 님 자리 지정`, { icon: 'users', ms: 1800 });
+  }
+  function memberSelect(it) {
+    const cur = it.member ? memberById(it.member) : null;
+    const where = new Map();
+    state.doc.items.forEach((x) => { if (x.member && x.id !== it.id && isSeat(x)) { const r = itemRoom(x); where.set(x.member, r ? roomName(r) : '다른 자리'); } });
+    let s = '<select data-f="member" class="member-sel"><option value="">— 빈 자리 —</option>';
+    if (!cur && it.name) s += `<option value="__keep" selected>✎ ${esc(it.name)} (직접 입력)</option>`;
+    const groups = allTeams().map((t) => ({ name: t.name, ms: state.roster.members.filter((m) => m.team === t.id) }));
+    groups.push({ name: '팀 미지정', ms: state.roster.members.filter((m) => !m.team || !state.roster.teamById.has(m.team)) });
+    groups.forEach((g) => {
+      if (!g.ms.length) return;
+      s += `<optgroup label="${esc(g.name)} (${g.ms.length})">` + g.ms.map((m) => `<option value="${m.id}"${cur && cur.id === m.id ? ' selected' : ''}>${esc(m.name)}${where.has(m.id) ? ` — ${esc(where.get(m.id))}에 자리 있음` : ''}</option>`).join('') + '</optgroup>';
+    });
+    s += '<optgroup label="기타"><option value="__custom">✎ 명단에 없는 이름 직접 입력…</option><option value="__new">＋ 구성원 명단에 새로 추가…</option></optgroup></select>';
+    return s;
+  }
+
+  /* --- 구성원 패널 --- */
+  const peopleState = { filter: 'all', collapsed: new Set() };
   function renderPeople() {
+    const ms = state.roster.members;
+    const seatedIds = new Set(state.doc.items.filter((it) => it.member && memberById(it.member)).map((it) => it.member));
+    const seated = ms.filter((m) => seatedIds.has(m.id)).length;
     const t = state.totals || { desks: 0, named: 0 };
-    const vac = state.highlight && state.highlight.kind === 'vacant' ? ' on' : '';
-    $('#peopleSummary').innerHTML = `<div class="k"><b>${t.named}</b><span>배정</span></div><div class="k clickable${vac}" id="vacantK" title="빈 자리 강조"><b>${t.desks - t.named}</b><span>빈 자리</span></div><div class="k"><b>${state.doc.teams.length}</b><span>팀</span></div>`;
+    const f = peopleState.filter;
+    $('#peopleSummary').innerHTML = ms.length
+      ? `<div class="k clickable${f === 'all' ? ' on' : ''}" data-pf="all" title="전체 보기"><b>${ms.length}</b><span>구성원</span></div><div class="k clickable${f === 'seated' ? ' on' : ''}" data-pf="seated" title="자리 있는 사람만"><b>${seated}</b><span>자리 있음</span></div><div class="k clickable${f === 'unseated' ? ' on' : ''}" data-pf="unseated" title="자리 없는 사람만"><b>${ms.length - seated}</b><span>자리 없음</span></div>`
+      : `<div class="k"><b>${t.named}</b><span>배정</span></div><div class="k clickable${state.highlight && state.highlight.kind === 'vacant' ? ' on' : ''}" data-pf="vacant" title="빈 자리 강조"><b>${t.desks - t.named}</b><span>빈 자리</span></div><div class="k"><b>0</b><span>구성원</span></div>`;
+    const vac = $('#vacantBtn');
+    if (vac) { vac.classList.toggle('on', !!(state.highlight && state.highlight.kind === 'vacant')); vac.querySelector('span').textContent = `빈 자리 ${t.desks - t.named}`; }
     renderPeopleList();
   }
   function renderPeopleList() {
+    const el = $('#peopleList');
     const q = ($('#peopleSearch').value || '').trim().toLowerCase();
-    const list = people().filter((it) => { if (!q) return true; const tm = teamOf(it.team); return it.name.toLowerCase().includes(q) || (tm && tm.name.toLowerCase().includes(q)); });
-    if (!people().length) {
-      $('#peopleList').innerHTML = `<div class="pl-empty">아직 이름이 지정된 자리가 없어요.<br>${state.mode === 'edit' ? '책상을 선택하고 오른쪽 패널에서 이름을 입력하세요.' : '편집 모드에서 책상에 이름을 지정할 수 있어요.'}</div>`;
-      return;
-    }
-    const byRoom = new Map();
-    list.forEach((it) => { const r = itemRoom(it); const k = r ? r.id : '_'; if (!byRoom.has(k)) byRoom.set(k, []); byRoom.get(k).push(it); });
+    const edit = state.mode === 'edit';
+    const seatMap = new Map();
+    state.doc.items.forEach((it) => { if (it.member && isSeat(it)) seatMap.set(it.member, it); });
+    const h = state.highlight;
     let s = '';
-    ROOMS.concat([{ id: '_', name: '기타', no: '' }]).forEach((r) => {
-      const arr = byRoom.get(r.id);
-      if (!arr) return;
-      arr.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-      s += `<div class="pl-room"><span>${esc(r.id === '_' ? '전용공간 밖' : roomName(r))}</span><span>${arr.length}</span></div>`;
-      arr.forEach((it) => {
-        const tm = teamOf(it.team);
-        const sel = state.sel.has(it.id) ? ' sel' : '';
-        s += `<button class="pl-row${sel}" data-person="${it.id}"><span class="av" style="background:${tm ? tm.color : '#4F46E5'}">${esc(Array.from(it.name)[0] || '?')}</span><span class="nm">${esc(it.name)}</span>${tm ? `<span class="tm">${esc(tm.name)}</span>` : ''}</button>`;
+    if (!state.roster.members.length) {
+      s += `<div class="pl-empty">구성원 명단이 비어 있어요.${edit ? '<br><b>엑셀 붙여넣기</b>로 팀·이름 두 열을 한 번에 넣거나 <b>＋ 구성원</b>으로 추가하세요.' : '<br>편집 모드에서 명단을 만들 수 있어요.'}</div>`;
+    }
+    const groups = allTeams().map((tm) => ({ tm, ms: state.roster.members.filter((m) => m.team === tm.id) }));
+    const none = state.roster.members.filter((m) => !m.team || !state.roster.teamById.has(m.team));
+    if (none.length) groups.push({ tm: { id: '', name: '팀 미지정', color: '#94A3B8' }, ms: none });
+    groups.forEach(({ tm, ms }) => {
+      const list = ms.filter((m) => {
+        if (q && !m.name.toLowerCase().includes(q) && !tm.name.toLowerCase().includes(q)) return false;
+        if (peopleState.filter === 'seated') return seatMap.has(m.id);
+        if (peopleState.filter === 'unseated') return !seatMap.has(m.id);
+        return true;
+      });
+      if (!list.length && (q || peopleState.filter !== 'all' || !ms.length)) { if (!(edit && !ms.length && !q && peopleState.filter === 'all')) return; }
+      const seatedN = ms.filter((m) => seatMap.has(m.id)).length;
+      const closed = peopleState.collapsed.has(tm.id) && !q;
+      const hl = h && h.kind === 'team' && h.id === tm.id;
+      s += `<div class="pl-team${closed ? ' closed' : ''}${hl ? ' on' : ''}" data-team="${tm.id}"><button class="pl-team-h" data-tcollapse="${tm.id}"><i class="tdot" style="background:${tm.color}"></i><b>${esc(tm.name)}</b><span class="cnt">${seatedN}/${ms.length}</span>${ic('chevron')}</button>${tm.id ? `<button class="pl-eye" data-team-hl="${tm.id}" title="도면에서 이 팀 강조">${svgIcon('eye')}</button>` : ''}</div>`;
+      if (closed) return;
+      list.forEach((m) => {
+        const desk = seatMap.get(m.id), r = desk ? itemRoom(desk) : null;
+        const sel = desk && state.sel.has(desk.id) ? ' sel' : '';
+        s += `<div class="pl-row${sel}${edit ? ' draggable' : ''}" data-mid="${m.id}" title="${desk ? '클릭: 자리로 이동' : edit ? '책상 위로 끌어다 놓아 자리 지정' : '아직 자리가 없어요'}"><span class="av" style="background:${tm.color}">${esc(Array.from(m.name)[0] || '?')}</span><span class="nm">${esc(m.name)}</span><span class="seat${desk ? '' : ' none'}">${desk ? esc(r ? roomName(r) : '자리 있음') : '자리 없음'}</span>${edit ? `<button class="pl-more" data-mmore="${m.id}" title="이름·팀 변경, 삭제">${svgIcon('more')}</button>` : ''}</div>`;
       });
     });
-    $('#peopleList').innerHTML = s || '<div class="pl-empty">검색 결과가 없어요</div>';
+    // 명단에 없는 이름 (직접 입력)
+    const customs = state.doc.items.filter((it) => isSeat(it) && !(it.member && memberById(it.member)) && it.name && (!q || it.name.toLowerCase().includes(q)));
+    if (customs.length && peopleState.filter !== 'unseated') {
+      s += `<div class="pl-team"><div class="pl-team-h static"><i class="tdot" style="background:#CBD5E1"></i><b>명단에 없는 이름</b><span class="cnt">${customs.length}</span></div></div>`;
+      customs.forEach((it) => {
+        const r = itemRoom(it), tm = teamOf(it.team);
+        s += `<div class="pl-row" data-person="${it.id}"><span class="av" style="background:${tm ? tm.color : '#94A3B8'}">${esc(Array.from(it.name)[0] || '?')}</span><span class="nm">${esc(it.name)}</span><span class="seat">${esc(r ? roomName(r) : '')}</span></div>`;
+      });
+    }
+    el.innerHTML = s || '<div class="pl-empty">검색 결과가 없어요</div>';
+    const st = $('#rosterSrc');
+    if (st) st.textContent = !state.roster.members.length ? '' : server.on && server.status === 'online' ? `구성원 명단 · 서버에 저장 · 모든 시나리오 공용${state.roster.rev ? ` · v${state.roster.rev}` : ''}` : server.on ? '구성원 명단 · 서버 연결 안 됨 (이 브라우저 사본)' : '구성원 명단 · 이 브라우저에 저장';
   }
-  function renderTeams() {
-    const edit = state.mode === 'edit';
-    const cnt = {};
-    state.doc.items.forEach((it) => { if (it.team && isSeat(it)) cnt[it.team] = (cnt[it.team] || 0) + 1; });
-    const h = state.highlight;
-    $('#teamList').innerHTML = state.doc.teams.length ? state.doc.teams.map((t) => `<div class="team-row${h && h.kind === 'team' && h.id === t.id ? ' on' : ''}" data-team="${t.id}"><span class="sw" style="background:${t.color}">${edit ? `<input type="color" value="${t.color}" data-team-color="${t.id}" title="색상 변경">` : ''}</span><input class="tn" value="${esc(t.name)}" data-team-name="${t.id}" ${edit ? '' : 'readonly'} maxlength="30"><span class="cnt">${cnt[t.id] || 0}</span><button class="hl" data-team-hl="${t.id}" title="이 팀 강조">${svgIcon('eye')}</button>${edit ? `<button class="rm" data-team-rm="${t.id}" title="팀 삭제">${svgIcon('x')}</button>` : ''}</div>`).join('')
-      : `<div class="pl-empty" style="padding:8px">${edit ? '팀을 만들고 자리에 지정하면 색으로 구분돼요.' : '등록된 팀이 없어요.'}</div>`;
-  }
+  function renderTeams() { /* 팀은 구성원 패널에 통합 */ }
   function renderLegend() {
     const lg = $('#legend');
     const cnt = {};
-    state.doc.items.forEach((it) => { if (it.team && isSeat(it)) cnt[it.team] = (cnt[it.team] || 0) + 1; });
-    const ts = state.doc.teams.filter((t) => cnt[t.id]);
+    state.doc.items.forEach((it) => { if (isSeat(it)) { const t = teamIdOf(it); if (t) cnt[t] = (cnt[t] || 0) + 1; } });
+    const ts = allTeams().filter((t) => cnt[t.id]);
     lg.hidden = !ts.length;
     const h = state.highlight;
     lg.innerHTML = ts.map((t) => `<span data-legend="${t.id}" class="${h && h.kind === 'team' && h.id !== t.id ? 'off' : ''}"><i style="background:${t.color}"></i>${esc(t.name)} ${cnt[t.id]}</span>`).join('');
@@ -2243,39 +2407,244 @@
   function setHighlight(h) {
     const cur = state.highlight;
     state.highlight = cur && h && cur.kind === h.kind && cur.id === h.id ? null : h;
-    renderItems(); renderLabels(); renderPeople(); renderTeams(); renderLegend();
+    renderItems(); renderLabels(); renderPeople(); renderLegend();
   }
   async function askNewTeam() {
     const name = await askText('새 팀', '', '예: 개발팀');
     if (!name) return null;
-    const used = new Set(state.doc.teams.map((t) => t.color));
-    const color = TEAM_COLORS.find((c) => !used.has(c)) || TEAM_COLORS[state.doc.teams.length % TEAM_COLORS.length];
-    const t = { id: 't' + nid(), name: name.slice(0, 30), color };
-    mutate(() => state.doc.teams.push(t));
+    if (allTeams().some((t) => t.name === name)) { toast('같은 이름의 팀이 이미 있어요', { icon: 'info' }); return allTeams().find((t) => t.name === name); }
+    const t = { id: 't' + nid(), name: name.slice(0, 30), color: nextTeamColor(allTeams()) };
+    await editRoster((r) => { r.teams.push(t); }, `'${t.name}' 팀을 추가했어요`);
     return t;
   }
+
+  /* --- 구성원 추가 · 수정 --- */
+  function openMemberDialog(m, onDone, pre) {
+    pre = pre || {};
+    const teamOpts = (sel) => `<option value="">팀 미지정</option>${allTeams().map((t) => `<option value="${t.id}"${t.id === sel ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}<option value="__newteam">＋ 새 팀…</option>`;
+    const nm0 = pre.name != null ? pre.name : m ? m.name : '', tm0 = pre.team != null ? pre.team : m ? m.team : '';
+    modal({
+      title: m ? '구성원 정보 변경' : '구성원 추가',
+      body: `<label class="fld"><span>이름</span><input class="inp" id="mbName" maxlength="30" value="${esc(nm0)}" placeholder="예: 댄"></label>
+        <label class="fld"><span>팀</span><select id="mbTeam">${teamOpts(tm0)}</select></label>
+        <p class="hint">명단은 모든 시나리오가 함께 써요. 이름·팀을 바꾸면 이 사람이 앉은 모든 자리 표시가 함께 바뀌어요.</p>`,
+      actions: [{ label: '취소', kind: 'soft' }, { label: m ? '변경' : '추가', kind: 'primary', fn: () => {
+        const name = ($('#mbName').value || '').trim(), team = $('#mbTeam').value;
+        if (!name) { toast('이름을 입력해 주세요', { icon: 'info' }); return false; }
+        if (state.roster.members.some((x) => x.name === name && (!m || x.id !== m.id))) { toast(`'${name}'은(는) 이미 명단에 있어요`, { icon: 'info' }); return false; }
+        if (m) editRoster((r) => { const x = r.members.find((y) => y.id === m.id); if (x) { x.name = name; x.team = team; } }, '변경했어요');
+        else {
+          const nm = { id: 'm' + nid(), name, team };
+          editRoster((r) => { r.members.push(nm); }, `${name} 님을 명단에 추가했어요`).then((ok) => { if (ok && onDone) onDone(nm); });
+        }
+        return undefined;
+      } }],
+      onOpen: (root) => {
+        $('#mbName', root).focus();
+        $('#mbTeam', root).addEventListener('change', async (e) => {
+          if (e.target.value !== '__newteam') return;
+          const nameNow = $('#mbName').value;
+          const t = await askNewTeam(); // 새 팀 입력 후 이 창을 다시 연다
+          openMemberDialog(m, onDone, { name: nameNow, team: t ? t.id : tm0 });
+        });
+        root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'mbName') { e.preventDefault(); $('#modalRoot [data-act="1"]').click(); } });
+      },
+    });
+  }
+  function openMemberMenu(btn, m) {
+    const r = btn.getBoundingClientRect();
+    const desk = seatOfMember(m.id);
+    const entries = [{ label: '이름 · 팀 변경', icon: 'edit', fn: () => openMemberDialog(m) }];
+    if (desk) {
+      entries.push({ label: '자리로 이동', icon: 'target', fn: () => selectItem(desk.id, true) });
+      entries.push({ label: '이 시나리오에서 자리 비우기', icon: 'x', fn: () => assignMember(desk.id, null) });
+    }
+    entries.push('-');
+    entries.push({ label: '명단에서 삭제', icon: 'trash', danger: true, fn: async () => {
+      if (!(await confirmBox('구성원 삭제', `${esc(m.name)} 님을 구성원 명단에서 삭제할까요?${desk ? '<br>이 시나리오의 자리도 함께 비워요.' : ''}<br>다른 시나리오에 지정된 자리는 이름만 남아요.`, '삭제', true))) return;
+      if (desk) assignMember(desk.id, null);
+      editRoster((rr) => { rr.members = rr.members.filter((x) => x.id !== m.id); }, `${m.name} 님을 명단에서 삭제했어요`);
+    } });
+    openMenu(r.left - 180, r.bottom + 4, entries);
+  }
+
+  /* --- 팀 관리 --- */
+  function openTeamMgr() {
+    modal({ title: '팀 관리', body: '<p>팀 이름·색상·순서를 바꾸면 모든 시나리오에 바로 적용돼요.</p><div id="teamMgr" class="team-mgr"></div>', actions: [{ label: '＋ 팀 추가', kind: 'soft', fn: () => { askNewTeam().then(() => openTeamMgr()); } }, { label: '닫기', kind: 'primary' }] });
+    renderTeamMgr();
+  }
+  function renderTeamMgr() {
+    const el = $('#teamMgr');
+    if (!el) return;
+    const cnt = {};
+    state.roster.members.forEach((m) => { cnt[m.team] = (cnt[m.team] || 0) + 1; });
+    el.innerHTML = state.roster.teams.length ? state.roster.teams.map((t, i) => `<div class="team-row" data-tid="${t.id}"><span class="sw" style="background:${t.color}"><input type="color" value="${t.color}" data-tcolor="${t.id}" title="색상"></span><input class="tn" value="${esc(t.name)}" data-tname="${t.id}" maxlength="30"><span class="cnt">${cnt[t.id] || 0}명</span><button class="hl" data-tup="${t.id}" title="위로"${i ? '' : ' disabled'}>▲</button><button class="hl" data-tdown="${t.id}" title="아래로"${i < state.roster.teams.length - 1 ? '' : ' disabled'}>▼</button><button class="rm" data-tdel="${t.id}" title="팀 삭제">${svgIcon('x')}</button></div>`).join('') : '<div class="pl-empty">팀이 없어요</div>';
+    el.onchange = (e) => {
+      const n = e.target.dataset.tname, c = e.target.dataset.tcolor;
+      if (n) { const v = e.target.value.trim(); if (v) editRoster((r) => { const t = r.teams.find((x) => x.id === n); if (t) t.name = v.slice(0, 30); }); }
+      if (c) editRoster((r) => { const t = r.teams.find((x) => x.id === c); if (t) t.color = e.target.value; });
+    };
+    el.onkeydown = (e) => { if (e.key === 'Enter' && e.target.dataset.tname) e.target.blur(); };
+    el.onclick = async (e) => {
+      const up = e.target.closest('[data-tup]'), dn = e.target.closest('[data-tdown]'), del = e.target.closest('[data-tdel]');
+      const move = (id, d) => editRoster((r) => { const i = r.teams.findIndex((x) => x.id === id), j = i + d; if (i < 0 || j < 0 || j >= r.teams.length) return; const [t] = r.teams.splice(i, 1); r.teams.splice(j, 0, t); });
+      if (up) move(up.dataset.tup, -1);
+      if (dn) move(dn.dataset.tdown, 1);
+      if (del) {
+        const id = del.dataset.tdel, t = state.roster.teamById.get(id), n = cnt[id] || 0;
+        if (n && !(await confirmBox('팀 삭제', `'${esc(t.name)}' 팀을 삭제할까요?<br>소속 ${n}명은 '팀 미지정'으로 남아요.`, '삭제', true))) { openTeamMgr(); return; }
+        editRoster((r) => { r.teams = r.teams.filter((x) => x.id !== id); r.members.forEach((m) => { if (m.team === id) m.team = ''; }); }, `'${t.name}' 팀을 삭제했어요`);
+        if (n) openTeamMgr();
+      }
+    };
+  }
+
+  /* --- 엑셀 붙여넣기 (팀 | 이름 두 열) --- */
+  function parseRosterText(text) {
+    const rows = [];
+    String(text || '').split(/\r?\n/).forEach((line) => {
+      if (!line.trim()) return;
+      let parts = line.split('\t');
+      if (parts.length < 2) parts = line.split(/\s*[,，]\s*/);
+      parts = parts.map((x) => x.trim()).filter((x, i) => x || i < 2);
+      if (parts.length < 2) return;
+      const [team, name] = parts;
+      if (!name || /^(인원|이름|성명|name)$/i.test(name) || /^(팀|부서|team)$/i.test(team)) return;
+      rows.push({ team, name });
+    });
+    return rows;
+  }
+  function rosterFromRows(base, rows, mode) {
+    const r = JSON.parse(JSON.stringify(base || { v: 1, teams: [], members: [] }));
+    const teamId = (name) => {
+      if (!name) return '';
+      let t = r.teams.find((x) => x.name === name);
+      if (!t) { t = { id: 't' + nid(), name: name.slice(0, 30), color: nextTeamColor(r.teams) }; r.teams.push(t); }
+      return t.id;
+    };
+    const seen = new Set();
+    rows.forEach(({ team, name }) => {
+      if (seen.has(name)) return;
+      seen.add(name);
+      const tid = teamId(team);
+      const m = r.members.find((x) => x.name === name);
+      if (m) m.team = tid; else r.members.push({ id: 'm' + nid(), name: name.slice(0, 30), team: tid });
+    });
+    if (mode === 'replace') {
+      r.members = rows.map((x) => r.members.find((m) => m.name === x.name)).filter((m, i, a) => m && a.indexOf(m) === i);
+      const used = new Set(r.members.map((m) => m.team));
+      const order = [];
+      rows.forEach((x) => { const t = r.teams.find((tt) => tt.name === x.team); if (t && !order.includes(t)) order.push(t); });
+      r.teams = order.concat(r.teams.filter((t) => !order.includes(t) && used.has(t.id)));
+    }
+    return r;
+  }
+  function importRosterText(text, mode) {
+    const rows = parseRosterText(text);
+    if (!rows.length) { toast('팀·이름 두 열을 찾지 못했어요', { icon: 'info' }); return Promise.resolve(false); }
+    return editRoster((cur) => rosterFromRows(cur, rows, mode), `구성원 ${rows.length}명을 명단에 반영했어요`);
+  }
+  function openRosterPaste() {
+    modal({
+      title: '엑셀에서 붙여넣기',
+      body: `<p>엑셀에서 <b>팀 · 이름</b> 두 열을 그대로 복사해 붙여넣으세요. 제목 줄(팀/인원)은 자동으로 건너뛰어요.</p>
+        <textarea class="inp" id="rpText" rows="9" style="width:100%;font-size:13px" placeholder="경영지원&#9;댄&#10;경영지원&#9;헤시&#10;SCM&#9;스테파니"></textarea>
+        <div id="rpPrev" class="hint" style="margin:8px 2px"></div>
+        <div class="sv-modes">
+          <label class="sv-mode"><input type="radio" name="rpMode" value="replace" checked><span><b>명단을 이 내용으로 바꾸기</b><small>붙여넣은 목록에 없는 사람은 명단에서 빠져요 (인원 변동 반영)</small></span></label>
+          <label class="sv-mode"><input type="radio" name="rpMode" value="merge"><span><b>추가 · 팀 변경만 반영</b><small>기존 명단은 유지하고 새 사람 추가, 팀 이동만 반영</small></span></label></div>`,
+      actions: [{ label: '취소', kind: 'soft' }, { label: '반영하기', kind: 'primary', fn: () => {
+        const mode = (document.querySelector('input[name="rpMode"]:checked') || {}).value || 'replace';
+        importRosterText($('#rpText').value, mode);
+        return undefined;
+      } }],
+      onOpen: (root) => {
+        const ta = $('#rpText', root), pv = $('#rpPrev', root);
+        const upd = () => {
+          const rows = parseRosterText(ta.value);
+          if (!rows.length) { pv.textContent = ''; return; }
+          const names = new Set(rows.map((x) => x.name));
+          const cur = state.roster.members;
+          const add = rows.filter((x) => !cur.some((m) => m.name === x.name)).length;
+          const moved = rows.filter((x) => { const m = cur.find((mm) => mm.name === x.name); return m && (state.roster.teamById.get(m.team) || {}).name !== x.team; }).length;
+          const gone = cur.filter((m) => !names.has(m.name)).length;
+          pv.textContent = `${new Set(rows.map((x) => x.team)).size}개 팀 · ${names.size}명 — 새로 추가 ${add} · 팀 변경 ${moved}${gone ? ` · 목록에 없는 기존 구성원 ${gone}명(바꾸기 선택 시 빠짐)` : ''}`;
+        };
+        ta.addEventListener('input', upd);
+        ta.focus();
+      },
+    });
+  }
+
+  /* --- 구성원을 책상으로 끌어다 놓기 --- */
+  function bindPeopleDrag() {
+    const list = $('#peopleList');
+    let dd = null;
+    list.addEventListener('pointerdown', (e) => {
+      const row = e.target.closest('.pl-row[data-mid]');
+      if (!row || state.mode !== 'edit' || e.button !== 0 || e.target.closest('[data-mmore]')) return;
+      dd = { id: row.dataset.mid, row, sx: e.clientX, sy: e.clientY, moved: false, pid: e.pointerId };
+      try { row.setPointerCapture(e.pointerId); } catch (er) { /* noop */ }
+    });
+    list.addEventListener('pointermove', (e) => {
+      if (!dd || e.pointerId !== dd.pid) return;
+      if (!dd.moved && Math.hypot(e.clientX - dd.sx, e.clientY - dd.sy) > 6) {
+        dd.moved = true;
+        const m = memberById(dd.id), g = $('#dragGhost');
+        const tm = m && state.roster.teamById.get(m.team);
+        g.innerHTML = `<span class="av" style="width:22px;height:22px;font-size:10.5px;background:${tm ? tm.color : '#4F46E5'}">${esc(Array.from((m || {}).name || '?')[0])}</span>${esc((m || {}).name || '')}`;
+        g.hidden = false;
+      }
+      if (!dd.moved) return;
+      const g = $('#dragGhost');
+      g.style.left = e.clientX + 'px'; g.style.top = e.clientY + 'px';
+      const under = document.elementsFromPoint(e.clientX, e.clientY).find((x) => x.closest && x.closest('#L-items [data-id]'));
+      const it = under ? state.idx.get(under.closest('[data-id]').getAttribute('data-id')) : null;
+      const desk = it ? seatDesk(it) : null;
+      state.hoverId = desk ? desk.id : null; renderUI();
+    });
+    const up = (e) => {
+      if (!dd || e.pointerId !== dd.pid) return;
+      const d = dd; dd = null;
+      $('#dragGhost').hidden = true;
+      const hovered = state.hoverId; state.hoverId = null; renderUI();
+      if (!d.moved) { // 클릭
+        const desk = seatOfMember(d.id);
+        if (desk) { selectItem(desk.id, true); if (window.innerWidth <= 900) document.body.classList.remove('show-left'); }
+        else toast('아직 자리가 없어요 · 이름을 책상 위로 끌어다 놓거나, 책상을 선택해 오른쪽에서 고르세요', { icon: 'info', ms: 3200 });
+        return;
+      }
+      if (hovered) assignMember(hovered, d.id);
+      else toast('책상 위에 놓아야 자리가 지정돼요', { icon: 'info', ms: 1800 });
+    };
+    list.addEventListener('pointerup', up);
+    list.addEventListener('pointercancel', up);
+  }
+
   function bindPeople() {
     $('#peopleSearch').addEventListener('input', renderPeopleList);
-    $('#peopleList').addEventListener('click', (e) => { const b = e.target.closest('[data-person]'); if (b) { selectItem(b.dataset.person, true); if (window.innerWidth <= 900) document.body.classList.remove('show-left'); } });
-    $('#peopleSummary').addEventListener('click', (e) => { if (e.target.closest('#vacantK')) setHighlight({ kind: 'vacant' }); });
-    $('#addTeamBtn').addEventListener('click', () => askNewTeam());
-    const tl = $('#teamList');
-    tl.addEventListener('click', (e) => {
-      const hl = e.target.closest('[data-team-hl]'), rm = e.target.closest('[data-team-rm]');
-      if (hl) setHighlight({ kind: 'team', id: hl.dataset.teamHl });
-      if (rm) {
-        const id = rm.dataset.teamRm;
-        mutate(() => { state.doc.teams = state.doc.teams.filter((t) => t.id !== id); state.doc.items.forEach((i) => { if (i.team === id) delete i.team; }); });
-        if (state.highlight && state.highlight.id === id) state.highlight = null;
-      }
+    $('#peopleList').addEventListener('click', (e) => {
+      const more = e.target.closest('[data-mmore]');
+      if (more) { e.stopPropagation(); const m = memberById(more.dataset.mmore); if (m) openMemberMenu(more, m); return; }
+      const hl = e.target.closest('[data-team-hl]');
+      if (hl) { setHighlight({ kind: 'team', id: hl.dataset.teamHl }); return; }
+      const col = e.target.closest('[data-tcollapse]');
+      if (col) { const id = col.dataset.tcollapse; if (peopleState.collapsed.has(id)) peopleState.collapsed.delete(id); else peopleState.collapsed.add(id); renderPeopleList(); return; }
+      const b = e.target.closest('[data-person]');
+      if (b) { selectItem(b.dataset.person, true); if (window.innerWidth <= 900) document.body.classList.remove('show-left'); }
     });
-    tl.addEventListener('change', (e) => {
-      const n = e.target.dataset.teamName, c = e.target.dataset.teamColor;
-      if (n) { const v = e.target.value.trim(); if (v) mutate(() => { state.doc.teams.find((t) => t.id === n).name = v.slice(0, 30); }); else renderTeams(); }
-      if (c) mutate(() => { state.doc.teams.find((t) => t.id === c).color = e.target.value; });
+    $('#peopleSummary').addEventListener('click', (e) => {
+      const k = e.target.closest('[data-pf]');
+      if (!k) return;
+      if (k.dataset.pf === 'vacant') { setHighlight({ kind: 'vacant' }); return; }
+      peopleState.filter = k.dataset.pf; renderPeople();
     });
-    tl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.dataset.teamName) e.target.blur(); });
+    $('#vacantBtn').addEventListener('click', () => setHighlight({ kind: 'vacant' }));
+    $('#addMemberBtn').addEventListener('click', () => openMemberDialog(null));
+    $('#pasteRosterBtn').addEventListener('click', openRosterPaste);
+    $('#teamMgrBtn').addEventListener('click', openTeamMgr);
     $('#legend').addEventListener('click', (e) => { const sp = e.target.closest('[data-legend]'); if (sp) setHighlight({ kind: 'team', id: sp.dataset.legend }); });
+    bindPeopleDrag();
   }
 
   /* ---------------------------------------------------------- search */
@@ -2285,9 +2654,11 @@
     const run = () => {
       const q = inp.value.trim().toLowerCase();
       if (!q) { pop.hidden = true; state.searchHits = null; renderLabels(); return; }
-      const ppl = state.doc.items.filter((it) => it.name && it.name.toLowerCase().includes(q)).slice(0, 12);
+      const ppl = state.doc.items.filter((it) => { const n = nameOf(it); return n && n.toLowerCase().includes(q); }).slice(0, 12);
+      const seated = new Set(ppl.map((it) => it.member).filter(Boolean));
+      const loose = state.roster.members.filter((m) => !seated.has(m.id) && !seatOfMember(m.id) && m.name.toLowerCase().includes(q)).slice(0, 8);
       const rms = ROOMS.filter((r) => roomName(r).toLowerCase().includes(q) || r.no.includes(q));
-      res = ppl.map((it) => ({ kind: 'item', it })).concat(rms.map((r) => ({ kind: 'room', r })));
+      res = ppl.map((it) => ({ kind: 'item', it })).concat(loose.map((m) => ({ kind: 'member', m })), rms.map((r) => ({ kind: 'room', r })));
       fi = 0;
       state.searchHits = new Set(ppl.map((p) => p.id));
       renderLabels();
@@ -2298,15 +2669,18 @@
       if (!res.length) { pop.innerHTML = '<div class="empty">일치하는 이름이 없어요</div>'; return; }
       pop.innerHTML = res.map((x, i) => {
         if (x.kind === 'room') return `<button class="mi${i === fi ? ' focus' : ''}" data-i="${i}">${ic('door')}<span>${esc(roomName(x.r))}</span><small>${x.r.no}</small></button>`;
-        const tm = teamOf(x.it.team), r = itemRoom(x.it);
-        return `<button class="mi${i === fi ? ' focus' : ''}" data-i="${i}"><span class="av" style="width:22px;height:22px;font-size:10.5px;background:${tm ? tm.color : '#4F46E5'}">${esc(Array.from(x.it.name)[0])}</span><span>${esc(x.it.name)}</span><small>${esc([r ? roomName(r) : '', tm ? tm.name : ''].filter(Boolean).join(' · '))}</small></button>`;
+        if (x.kind === 'member') { const tmm = teamOf(x.m.team); return `<button class="mi${i === fi ? ' focus' : ''}" data-i="${i}"><span class="av" style="width:22px;height:22px;font-size:10.5px;background:${tmm ? tmm.color : '#94A3B8'}">${esc(Array.from(x.m.name)[0])}</span><span>${esc(x.m.name)}</span><small>${esc([tmm ? tmm.name : '', '자리 없음'].filter(Boolean).join(' · '))}</small></button>`; }
+        const nm = nameOf(x.it), tm = teamOf(teamIdOf(x.it)), r = itemRoom(x.it);
+        return `<button class="mi${i === fi ? ' focus' : ''}" data-i="${i}"><span class="av" style="width:22px;height:22px;font-size:10.5px;background:${tm ? tm.color : '#4F46E5'}">${esc(Array.from(nm)[0])}</span><span>${esc(nm)}</span><small>${esc([r ? roomName(r) : '', tm ? tm.name : ''].filter(Boolean).join(' · '))}</small></button>`;
       }).join('');
     };
     const go = (i) => {
       const x = res[i];
       if (!x) return;
       pop.hidden = true; inp.blur();
-      if (x.kind === 'room') { selectRoom(x.r.id); flyToRoom(x.r); } else selectItem(x.it.id, true);
+      if (x.kind === 'room') { selectRoom(x.r.id); flyToRoom(x.r); }
+      else if (x.kind === 'member') toast(`${x.m.name} 님은 이 시나리오에서 아직 자리가 없어요`, { icon: 'info', ms: 2600 });
+      else selectItem(x.it.id, true);
     };
     inp.addEventListener('input', run);
     inp.addEventListener('focus', () => { if (inp.value.trim()) run(); });
@@ -2536,7 +2910,7 @@
     const gi = (g) => { if (!g) return 0; if (!gmap.has(g)) gmap.set(g, gmap.size + 1); return gmap.get(g); };
     const items = doc.items.map((it) => {
       const d = S.def(it.type), cust = it.type === 'custom';
-      const a = [ti(it.type), r1(it.x), r1(it.y), !cust && it.w === d.w ? 0 : r1(it.w), !cust && it.h === d.h ? 0 : r1(it.h), norm(it.rot || 0), it.name || '', it.team || '', gi(it.group), it.locked ? 1 : 0, it.color || '', it.shape || '', it.note || '', it.floor ? 1 : 0];
+      const a = [ti(it.type), r1(it.x), r1(it.y), !cust && it.w === d.w ? 0 : r1(it.w), !cust && it.h === d.h ? 0 : r1(it.h), norm(it.rot || 0), it.name || '', it.team || '', gi(it.group), it.locked ? 1 : 0, it.color || '', it.shape || '', it.note || '', it.floor ? 1 : 0, it.member || ''];
       while (a.length > 3 && (a[a.length - 1] === '' || a[a.length - 1] === 0)) a.pop();
       return a;
     });
@@ -2555,6 +2929,7 @@
       if (a[11]) it.shape = a[11];
       if (a[12]) it.note = a[12];
       if (a[13]) it.floor = true;
+      if (a[14]) it.member = a[14];
       return it;
     });
     return { name: p.n || '', doc: normalizeDoc({ items, rooms: p.r || {}, teams: p.m || [] }) };
@@ -2900,6 +3275,7 @@
     ['current', 'live', 'liveIntro', 'dismissed', 'editorName', 'liveDefaultSet'].forEach((k) => { delete store[k]; });
     persist();
 
+    setRoster(store.roster || null, (store.roster && store.roster.rev) || 0);
     const qs = location.search;
     const mockServer = /selftest=server|[?&]servermock\b/.test(qs);
     const forceLocal = (/[?&]selftest\b/.test(qs) && !mockServer && !/selftest=fb/.test(qs)) || /[?&]local\b/.test(qs);
@@ -2932,6 +3308,7 @@
         setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab,
         openCustomModal, openShare, openHelp, openGallery, persist, baseDoc, canon, isDirty,
         openSaveDialog, doSave, openScenarioList, openScenario, startNew, openVersions, deleteSel, duplicateSel,
+        assignMember, editRoster, importRosterText, parseRosterText, openRosterPaste, openTeamMgr, openMemberDialog, fillSeatsWithTeam, nameOf, teamIdOf, memberById, seatOfMember,
         setView: (k, x, y) => { const r = stageSize(); Object.assign(state.view, { k, tx: r.w / 2 - x * k, ty: r.h / 2 - y * k }); applyView(); },
       },
     };

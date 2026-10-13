@@ -17,6 +17,7 @@
   'use strict';
 
   const SDK = '10.14.1';
+  const ROSTER_ID = 'team-roster'; // 구성원 명단 문서 id (scenarios 컬렉션 안, 기존 규칙으로 저장 가능)
   function loadScript(src) {
     if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve();
     return new Promise((resolve, reject) => {
@@ -91,6 +92,29 @@
         });
         return { rev };
       },
+      /** 구성원 명단: scenarios/team-roster 문서. fn(최신 명단|null) → 새 명단 (트랜잭션, 이전 버전은 history) */
+      async rosterCommit(fn, meta) {
+        const uid = await ensureAuth();
+        const ref = col.doc(ROSTER_ID);
+        let out = null;
+        await db.runTransaction(async (tx) => {
+          const s = await tx.get(ref);
+          const cur = s.exists ? s.data() : null;
+          let base = null;
+          try { base = cur ? JSON.parse(cur.data) : null; } catch (e) { base = null; }
+          const data = JSON.stringify(fn(base));
+          const author = String((meta && meta.author) || '').slice(0, 30);
+          if (cur) {
+            tx.set(ref.collection('history').doc(), { name: cur.name, author: cur.author || '', data: cur.data, rev: cur.rev, savedAt: ts(), by: uid, note: '명단 변경 전' });
+            tx.set(ref, { name: '구성원 명단', author, data, deleted: false, rev: cur.rev + 1, createdAt: cur.createdAt, createdBy: cur.createdBy, updatedAt: ts(), by: uid });
+            out = { rev: cur.rev + 1, data };
+          } else {
+            tx.set(ref, { name: '구성원 명단', author, data, deleted: false, rev: 1, createdAt: ts(), createdBy: uid, updatedAt: ts(), by: uid });
+            out = { rev: 1, data };
+          }
+        });
+        return out;
+      },
       async listHistory(id, n) {
         const q = await col.doc(id).collection('history').orderBy('savedAt', 'desc').limit(n || 30).get();
         return q.docs.map((d) => { const v = d.data(); return { id: d.id, name: v.name, author: v.author, data: v.data, rev: v.rev, note: v.note, savedAt: ms(v.savedAt) }; });
@@ -143,9 +167,22 @@
       async create(p) { await wait(); if (srv.fail) throw new Error('network'); return create(p, 'me-user'); },
       async update(id, patch, expectRev) { await wait(); if (srv.fail) throw new Error('network'); return update(id, patch, expectRev, 'me-user'); },
       async listHistory(id, n) { await wait(); return (srv.hist.get(id) || []).slice(0, n || 30); },
+      async rosterCommit(fn, meta) {
+        await wait();
+        if (srv.fail) throw new Error('network');
+        const cur = srv.sc.get(ROSTER_ID);
+        let base = null;
+        try { base = cur ? JSON.parse(cur.data) : null; } catch (e) { base = null; }
+        const data = JSON.stringify(fn(base));
+        if (cur) return { rev: update(ROSTER_ID, { data, author: (meta && meta.author) || '', note: '명단 변경 전' }, null, 'me-user').rev, data };
+        const t = now();
+        srv.sc.set(ROSTER_ID, { id: ROSTER_ID, name: '구성원 명단', author: (meta && meta.author) || '', data, rev: 1, deleted: false, by: 'me-user', createdBy: 'me-user', createdAt: t, updatedAt: t });
+        notify();
+        return { rev: 1, data };
+      },
       async setFeatured(id) { await wait(); srv.config = { featuredId: id }; notifyCfg(); },
     };
   }
 
-  window.LiveSync = { firebase: firebaseBackend, memory: memoryBackend };
+  window.LiveSync = { firebase: firebaseBackend, memory: memoryBackend, ROSTER_ID };
 })();

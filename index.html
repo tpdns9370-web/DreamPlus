@@ -78,11 +78,15 @@
     <section class="tab-body" data-body="people">
       <div class="field-search"><i data-icon="search"></i><input type="search" id="peopleSearch" placeholder="이름 · 팀 검색"></div>
       <div class="people-summary" id="peopleSummary"></div>
-      <div class="people-list" id="peopleList"></div>
-      <div class="teams-box">
-        <div class="box-head"><b>팀</b><button class="btn tiny soft edit-only" id="addTeamBtn"><i data-icon="plus"></i>팀 추가</button></div>
-        <div id="teamList" class="team-list"></div>
+      <div class="roster-tools">
+        <button class="btn tiny soft edit-only" id="addMemberBtn"><i data-icon="plus"></i>구성원</button>
+        <button class="btn tiny soft edit-only" id="pasteRosterBtn"><i data-icon="upload"></i>엑셀 붙여넣기</button>
+        <button class="btn tiny soft edit-only" id="teamMgrBtn"><i data-icon="users"></i>팀 관리</button>
+        <button class="btn tiny soft" id="vacantBtn" title="도면에서 빈 자리 강조"><i data-icon="seat"></i><span>빈 자리</span></button>
       </div>
+      <div class="people-list" id="peopleList"></div>
+      <p class="hint edit-only">이름을 책상 위로 끌어다 놓거나, 책상을 선택해 오른쪽에서 고르면 자리가 지정돼요.</p>
+      <p class="hint roster-src" id="rosterSrc"></p>
     </section>
 
     <section class="tab-body" data-body="display">

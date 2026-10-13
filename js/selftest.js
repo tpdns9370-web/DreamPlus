@@ -136,6 +136,14 @@
       await waitFor(() => SV.featuredId === idC && SV.byId.get(idC).deleted);
       api.mutate(() => { seatAt(626, 220).name = '대표테스트'; });
       ok('S14 대표가 삭제된 상태면 새로 저장한 시나리오가 대표로', await saveVia('4안', '댄', 'asNew') === true && await waitFor(() => src().name === '4안' && SV.featuredId === src().id));
+      await api.importRosterText('경영지원\t댄\nSCM\t샐리', 'replace');
+      ok('S15 구성원 명단 서버 저장 (시나리오 목록에는 안 보임)', srv.sc.has('team-roster') && !SV.list.some((s) => s.id === 'team-roster') && JSON.parse(srv.sc.get('team-roster').data).members.length === 2);
+      const rd = JSON.parse(srv.sc.get('team-roster').data); rd.members.push({ id: 'mX', name: '킴', team: rd.teams[0].id });
+      srv.updateAs('team-roster', { data: JSON.stringify(rd) });
+      ok('S16 다른 사람이 명단을 바꾸면 내 화면에도 반영', await waitFor(() => st.roster.members.some((m) => m.name === '킴')));
+      api.openScenarioList(); await sleep(30);
+      ok('S17 명단 문서는 시나리오 목록·삭제 목록에 안 나옴', !document.querySelector('#scnList [data-sid="team-roster"]'));
+      document.querySelector('#modalRoot [data-close]').click();
     } catch (e) { ok('서버 검증 예외 없음', false, e && (e.stack || e.message)); }
     showResult('SERVER');
     return;
@@ -178,7 +186,8 @@
       api.setMode('edit');
       const dA = seatAt(626, 80);
       api.select(dA.id);
-      ok('a) 이름 입력칸', await typeInto('#inspector [data-f="name"]', '저장테스트', true));
+      api.mutate(() => { dA.name = '저장테스트'; });
+      ok('a) 책상 이름 지정', st.idx.get(dA.id).name === '저장테스트');
       api.mutate(() => { st.doc.teams.push({ id: 'tQA', name: 'QA팀', color: '#10B981' }); dA.team = 'tQA'; });
       const dB = seatAt(1230, 80);
       const el = st.els.get(dB.id), r = el.getBoundingClientRect();
@@ -202,9 +211,8 @@
       ok('f) 내 아이템 저장', (store.customs || []).some((c) => c.name === '택배함'));
       ok('g) [저장하기] → 이 브라우저에 시나리오 저장', await saveVia('A안', '테스터', 'over') === true && store.work.src && store.work.src.kind === 'local' && store.work.src.name === 'A안');
       await sleep(400);
-      const dH = seatAt(1558, 80);
-      api.select(dH.id);
-      ok('h) 저장 후 추가 입력(포커스 이동 없이)', await typeInto('#inspector [data-f="name"]', '마지막입력', false));
+      api.selectRoom('r6c');
+      ok('h) 저장 후 추가 입력(포커스 이동 없이)', await typeInto('#inspector [data-f="roomNote"]', '마지막입력', false));
       out.push('→ 새로고침 후 save2 에서 확인');
       sessionStorage.setItem('save1-log', out.join('\n') + `\n__fails=${fails}`);
       location.href = location.pathname + '?selftest=save2';
@@ -232,9 +240,8 @@
       ok('e) 그리드 꺼짐 유지', st.prefs.grid === false && !document.querySelector('#L-grid rect'));
       ok('f) 내 아이템 "택배함" 유지', (store.customs || []).some((c) => c.name === '택배함') && !!document.querySelector('.cat-card[data-custom]'));
       const saved = Object.values(store.scenarios).find((s) => s.name === 'A안');
-      ok('g) 저장한 A안에는 저장 시점 내용만', !!saved && saved.doc.items.some((i) => i.name === '저장테스트') && !saved.doc.items.some((i) => i.name === '마지막입력'));
-      const dH = seatAt(1558, 80);
-      ok('h) 저장 후 입력도 작업 내용으로 보관됨', dH && dH.name === '마지막입력', dH ? String(dH.name) : 'no desk');
+      ok('g) 저장한 A안에는 저장 시점 내용만', !!saved && saved.doc.items.some((i) => i.name === '저장테스트') && !((saved.doc.rooms || {}).r6c || {}).note);
+      ok('h) 저장 후 입력도 작업 내용으로 보관됨', ((st.doc.rooms || {}).r6c || {}).note === '마지막입력', JSON.stringify(st.doc.rooms.r6c));
       ok('h) "저장 안 된 변경" 표시', api.isDirty() && document.querySelector('#saveState span').textContent === '저장 안 된 변경');
     } catch (e) { ok('검증 예외 없음', false, e && (e.stack || e.message)); }
     showResult(phase);
@@ -272,7 +279,7 @@
     api.mutate(() => { d0.name = '댄'; });
     await raf();
     ok('이름표 렌더링', document.querySelectorAll('#L-labels .lbl.person').length === 1);
-    ok('인스펙터 이름 입력칸', !!document.querySelector('#inspector [data-f="name"]') && document.querySelector('#inspector [data-f="name"]').value === '댄');
+    ok('인스펙터: 책상은 구성원 드롭다운 (직접 입력 이름 표시)', !!document.querySelector('#inspector select[data-f="member"] option[value="__keep"]') && document.querySelector('#inspector select[data-f="member"]').value === '__keep');
 
     // 3. 드래그 이동 (실제 포인터 이벤트)
     const el = st.els.get(d0.id);
@@ -456,6 +463,64 @@
     const bs = onR0.map((b) => [b.x, b.y]);
     api.select(r0.id); key('ArrowDown', { shiftKey: true });
     ok('T9 랙을 옮기면 위 박스도 함께 (방향키)', onR0.length >= 2 && onR0.every((b, i) => Math.abs(b.y - bs[i][1] - 10) < 0.01));
+
+    // 11-e. 구성원 명단 (엑셀 붙여넣기 · 책상 드롭다운 · 끌어다 놓기)
+    api.setMode('edit');
+    api.applyPreset('r36', 'restore'); api.applyPreset('r16', 'restore');
+    const XL = '팀\t인원\nCEO Staff\tA\nCEO Staff\tB\nSCM \t스테파니\nSCM \t샐리\nSCM \t제일린\n경영지원\t댄\n경영지원\t헤시\n해외\t토마스\n해외\t르네';
+    await api.importRosterText(XL, 'replace');
+    const RR = () => st.roster;
+    ok('R1 엑셀 두 열 붙여넣기 → 팀 4 · 구성원 9 (제목 줄·공백 정리)', RR().teams.length === 4 && RR().members.length === 9 && RR().teams[1].name === 'SCM', RR().teams.map((t) => t.name).join(',') + ' / ' + RR().members.length);
+    const dR = seatAt(626, 80);
+    api.select(dR.id); await raf();
+    const selEl = document.querySelector('#inspector select[data-f="member"]');
+    ok('R2 책상 선택 → 구성원 드롭다운 (팀별 묶음)', !!selEl && selEl.querySelectorAll('optgroup').length >= 4 && selEl.querySelectorAll('option').length >= 10);
+    const dan = RR().members.find((m) => m.name === '댄');
+    selEl.value = dan.id; selEl.dispatchEvent(new Event('change', { bubbles: true }));
+    await raf();
+    ok('R3 드롭다운에서 선택 → 자리 지정 + 이름표', st.idx.get(dR.id).member === dan.id && Array.from(document.querySelectorAll('#L-labels .nm')).some((t) => t.textContent === '댄'));
+    const d2 = seatAt(686, 80);
+    api.assignMember(d2.id, dan.id);
+    ok('R4 같은 사람을 다른 책상에 → 이전 자리는 자동으로 비움', st.idx.get(d2.id).member === dan.id && !st.idx.get(dR.id).member);
+    const dirtyBefore = api.canon(st.doc);
+    await api.editRoster((r) => { r.members.find((m) => m.name === '댄').name = 'Dan'; });
+    await raf();
+    ok('R5 명단에서 이름 변경 → 자리 표시 자동 변경 (시나리오 데이터는 그대로)', Array.from(document.querySelectorAll('#L-labels .nm')).some((t) => t.textContent === 'Dan') && api.canon(st.doc) === dirtyBefore);
+    const scm = RR().teams.find((t) => t.name === 'SCM');
+    await api.editRoster((r) => { r.members.find((m) => m.name === 'Dan').team = scm.id; });
+    ok('R6 명단에서 팀 변경 → 책상 팀 색도 변경', api.teamIdOf(st.idx.get(d2.id)) === scm.id && st.els.get(d2.id).innerHTML.toLowerCase().includes(scm.color.toLowerCase()));
+    const trio = [seatAt(1632, 80), seatAt(1632, 220), seatAt(1632, 360)];
+    st.sel = new Set(trio.map((d) => d.id)); api.renderAll();
+    api.fillSeatsWithTeam(scm.id);
+    const scmSeated = RR().members.filter((m) => m.team === scm.id && api.seatOfMember(m.id)).length;
+    ok('R7 팀으로 채우기 (SCM 빈 책상 3개)', trio.every((d) => st.idx.get(d.id).member) && scmSeated === 4, 'SCM seated ' + scmSeated);
+    api.setTab('people'); await raf();
+    const heshi = RR().members.find((m) => m.name === '헤시');
+    const row = document.querySelector(`#peopleList .pl-row[data-mid="${heshi.id}"]`);
+    const target = seatAt(1873, 360);
+    api.fit(false); await raf();
+    const tr = st.els.get(target.id).getBoundingClientRect(), rr = row.getBoundingClientRect();
+    const dtx = tr.left + tr.width / 2, dty = tr.top + tr.height * 0.3;
+    pe('pointerdown', row, rr.left + 20, rr.top + 10);
+    pe('pointermove', row, rr.left + 60, rr.top + 30);
+    pe('pointermove', row, dtx, dty);
+    pe('pointerup', row, dtx, dty);
+    ok('R8 구성원 이름을 책상으로 끌어다 놓기', st.idx.get(target.id).member === heshi.id);
+    ok('R9 구성원 패널: 팀별 목록 + 자리 현황', document.querySelectorAll('#peopleList .pl-team').length >= 4 && document.querySelector('#peopleSummary').textContent.includes('9'));
+    await api.importRosterText('경영지원\tDan\n경영지원\t헤시\n해외\t토마스\n해외\t르네\n해외\t킴', 'replace');
+    ok('R10 명단 바꾸기 (인원 변동): 빠진 사람 제거 · 새 사람 추가 · 기존 연결 유지', RR().members.length === 5 && RR().members.some((m) => m.name === '킴') && !RR().members.some((m) => m.name === '샐리') && st.idx.get(target.id).member === heshi.id);
+    await api.importRosterText('프로덕트\t올리비아', 'merge');
+    ok('R11 추가만 반영(merge)', RR().members.length === 6 && RR().teams.some((t) => t.name === '프로덕트'));
+    const sInp2 = document.getElementById('searchInput');
+    sInp2.value = '올리비아'; sInp2.dispatchEvent(new Event('input', { bubbles: true }));
+    ok('R12 검색: 자리 없는 구성원도 찾음', document.querySelector('#searchPop').textContent.includes('자리 없음'));
+    sInp2.value = ''; sInp2.dispatchEvent(new Event('input', { bubbles: true }));
+    const code2 = await api.encodeShare(st.doc, 'r'); const back2 = await api.decodeShare(code2);
+    ok('R13 공유 링크에 구성원 연결 유지', back2.doc.items.some((i) => i.member === heshi.id));
+    api.select(target.id); await raf();
+    const sel2 = document.querySelector('#inspector select[data-f="member"]');
+    sel2.value = ''; sel2.dispatchEvent(new Event('change', { bubbles: true }));
+    ok('R14 드롭다운 "빈 자리" → 자리 비움', !st.idx.get(target.id).member && !st.idx.get(target.id).name);
 
     // 12. 보기 모드: 클릭 선택
     api.setMode('view');
