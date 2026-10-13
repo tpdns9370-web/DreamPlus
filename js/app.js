@@ -2038,7 +2038,7 @@
     if (isSeat(it)) {
       // 책상: 구성원 명단에서 선택
       const m = it.member ? memberById(it.member) : null;
-      s += `<div class="sec"><label class="fld"><span>이 자리 사용자 <small class="lbl-sub">구성원 명단에서 선택</small></span>${memberSelect(it)}</label>`;
+      s += `<div class="sec"><div class="fld"><span>이 자리 사용자 <small class="lbl-sub">이름으로 검색해 지정</small></span>${memberCombo(it)}</div>`;
       s += m
         ? `<div class="grid2"><div class="fld"><span>팀</span><div class="team-ro">${tm ? `<span class="chip"><span class="d" style="background:${tm.color}"></span>${esc(tm.name)}</span>` : '<span class="chip">팀 미지정</span>'}<small>명단 기준</small></div></div>${roomBox}</div>`
         : `<div class="grid2"><label class="fld"><span>팀</span>${teamSelect(it.team)}</label>${roomBox}</div>`;
@@ -2126,6 +2126,7 @@
 
   function bindInspector() {
     const el = $('#inspector');
+    bindCombo(el);
     el.addEventListener('click', (e) => {
       const b = e.target.closest('button');
       if (!b) return;
@@ -2175,17 +2176,6 @@
       const items = selItems();
       const it = items.length > 1 ? primaryOf(items) : items[0];
       if (!f) return;
-      if (f === 'member' && it) {
-        const v = e.target.value;
-        if (v === '__keep') return;
-        if (v === '__custom') {
-          askText('명단에 없는 이름', it.member ? '' : (it.name || ''), '예: 방문자, 인턴(예정)').then((n) => { if (n) mutate(() => { delete it.member; it.name = n.slice(0, 40); }); else renderInspector(); });
-          return;
-        }
-        if (v === '__new') { const id = it.id; openMemberDialog(null, (m) => assignMember(id, m.id)); renderInspector(); return; }
-        assignMember(it.id, v || null);
-        return;
-      }
       if (f === 'teamFill') { if (e.target.value) fillSeatsWithTeam(e.target.value); return; }
       if (f === 'team' || f === 'bulkTeam') {
         const v = e.target.value;
@@ -2317,20 +2307,143 @@
     });
     if (m) toast(moved ? `${m.name} 님 자리를 옮겼어요 · 이전 자리는 비웠어요` : `${m.name} 님 자리 지정`, { icon: 'users', ms: 1800 });
   }
-  function memberSelect(it) {
+  /* --- 자리 사용자 검색: 이름 · 초성 · 팀으로 찾고 ↑↓ + Enter 로 지정 --- */
+  const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
+  const choseong = (str) => Array.from(str).map((ch) => { const c = ch.charCodeAt(0) - 0xAC00; return c >= 0 && c <= 11171 ? CHO[Math.floor(c / 588)] : ch; }).join('');
+  const combo = { deskId: null, opts: [], active: 0, q: '' };
+  function memberCombo(it) {
     const cur = it.member ? memberById(it.member) : null;
+    const tm = cur ? teamOf(cur.team) : teamOf(it.team);
+    const val = cur ? cur.name : it.name || '';
+    return `<div class="member-combo" data-desk="${it.id}">
+      <div class="mc-field"><span class="av mc-av" style="background:${val ? (tm ? tm.color : '#94A3B8') : '#D6D3CC'}">${esc(Array.from(val)[0] || '+')}</span>
+      <input class="mc-input" data-f="memberSearch" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="mcPop" autocomplete="off" spellcheck="false" value="${esc(val)}" placeholder="이름 · 초성 · 팀 검색 (예: 댄, ㄷ, SCM)">
+      ${val ? `<button class="mc-clear" type="button" data-mc-clear title="자리 비우기">${svgIcon('x')}</button>` : ''}</div>
+      <div class="mc-pop" id="mcPop" role="listbox" hidden></div>
+      <div class="mc-hint">입력하면 추천 인원이 떠요 · <kbd>↑</kbd><kbd>↓</kbd> 이동 · <kbd>Enter</kbd> 지정 · <kbd>Esc</kbd> 닫기</div></div>`;
+  }
+  function comboOptions(q, desk) {
+    q = q.trim();
+    const ql = q.toLowerCase(), jamo = /^[ㄱ-ㅎ]+$/.test(q);
     const where = new Map();
-    state.doc.items.forEach((x) => { if (x.member && x.id !== it.id && isSeat(x)) { const r = itemRoom(x); where.set(x.member, r ? roomName(r) : '다른 자리'); } });
-    let s = '<select data-f="member" class="member-sel"><option value="">— 빈 자리 —</option>';
-    if (!cur && it.name) s += `<option value="__keep" selected>✎ ${esc(it.name)} (직접 입력)</option>`;
-    const groups = allTeams().map((t) => ({ name: t.name, ms: state.roster.members.filter((m) => m.team === t.id) }));
-    groups.push({ name: '팀 미지정', ms: state.roster.members.filter((m) => !m.team || !state.roster.teamById.has(m.team)) });
-    groups.forEach((g) => {
-      if (!g.ms.length) return;
-      s += `<optgroup label="${esc(g.name)} (${g.ms.length})">` + g.ms.map((m) => `<option value="${m.id}"${cur && cur.id === m.id ? ' selected' : ''}>${esc(m.name)}${where.has(m.id) ? ` — ${esc(where.get(m.id))}에 자리 있음` : ''}</option>`).join('') + '</optgroup>';
+    state.doc.items.forEach((x) => { if (x.member && isSeat(x)) { const r = itemRoom(x); where.set(x.member, { id: x.id, room: r ? roomName(r) : '다른 자리' }); } });
+    const teamIdx = new Map(allTeams().map((t, i) => [t.id, i]));
+    const out = [];
+    state.roster.members.forEach((m) => {
+      const tm = state.roster.teamById.get(m.team) || null;
+      const nl = m.name.toLowerCase(), cs = choseong(m.name);
+      let score;
+      if (!q) score = 5;
+      else if (nl === ql) score = 0;
+      else if (nl.startsWith(ql)) score = 1;
+      else if (jamo && cs.startsWith(q)) score = 2;
+      else if (nl.includes(ql)) score = 3;
+      else if (jamo && cs.includes(q)) score = 4;
+      else if (tm && tm.name.toLowerCase().includes(ql)) score = 6;
+      else return;
+      const w = where.get(m.id), here = !!(w && desk && w.id === desk.id);
+      // 같은 점수면: 자리 없는 사람 → 다른 자리에 있는 사람 → 지금 이 자리 사람
+      out.push({ kind: 'member', m, tm, w: here ? null : w || null, here, score, rank: here ? 2 : w ? 1 : 0, ti: teamIdx.has(m.team) ? teamIdx.get(m.team) : 99 });
     });
-    s += '<optgroup label="기타"><option value="__custom">✎ 명단에 없는 이름 직접 입력…</option><option value="__new">＋ 구성원 명단에 새로 추가…</option></optgroup></select>';
-    return s;
+    out.sort((a, b) => a.score - b.score || a.rank - b.rank || a.ti - b.ti || a.m.name.localeCompare(b.m.name, 'ko'));
+    if (q && !state.roster.members.some((m) => m.name === q)) out.push({ kind: 'custom', text: q }, { kind: 'new', text: q });
+    if (desk && (desk.member || desk.name)) out.push({ kind: 'clear' });
+    return out;
+  }
+  function markMatch(name, q) {
+    const i = q ? name.toLowerCase().indexOf(q.trim().toLowerCase()) : -1;
+    if (i < 0 || !q.trim()) return esc(name);
+    const n = q.trim().length;
+    return esc(name.slice(0, i)) + '<mark>' + esc(name.slice(i, i + n)) + '</mark>' + esc(name.slice(i + n));
+  }
+  function renderCombo(root) {
+    const pop = root.querySelector('.mc-pop'), inp = root.querySelector('.mc-input');
+    if (!pop || !inp) return;
+    const q = combo.q;
+    pop.innerHTML = combo.opts.length ? combo.opts.map((o, i) => {
+      const a = i === combo.active ? ' active' : '';
+      const head = `<div class="mc-opt${a}${o.kind === 'member' ? '' : ' mc-extra'}" role="option" id="mco-${i}" data-oi="${i}" aria-selected="${i === combo.active}">`;
+      if (o.kind === 'member') {
+        return head + `<span class="av" style="background:${o.tm ? o.tm.color : '#94A3B8'}">${esc(Array.from(o.m.name)[0])}</span><span class="mc-name">${markMatch(o.m.name, q)}</span><span class="mc-team">${esc(o.tm ? o.tm.name : '팀 미지정')}</span><span class="mc-seat${o.here ? ' here' : o.w ? '' : ' free'}">${o.here ? '이 자리' : o.w ? esc(o.w.room) + '에서 이동' : '자리 없음'}</span></div>`;
+      }
+      if (o.kind === 'custom') return head + `${ic('edit')}<span>'<b>${esc(o.text)}</b>' — 명단에 없는 이름으로 지정</span></div>`;
+      if (o.kind === 'new') return head + `${ic('plus')}<span>'<b>${esc(o.text)}</b>' — 구성원 명단에 추가하고 지정…</span></div>`;
+      return head + `${ic('x')}<span>빈 자리로 두기</span></div>`;
+    }).join('') : `<div class="mc-empty">${state.roster.members.length ? '일치하는 구성원이 없어요' : '구성원 명단이 비어 있어요 · 왼쪽 구성원 탭에서 추가하세요'}</div>`;
+    pop.hidden = false;
+    inp.setAttribute('aria-expanded', 'true');
+    inp.setAttribute('aria-activedescendant', 'mco-' + combo.active);
+    const act = pop.querySelector('.mc-opt.active');
+    if (act) act.scrollIntoView({ block: 'nearest' });
+  }
+  function refreshCombo(root, q) {
+    combo.deskId = root.dataset.desk;
+    combo.q = q;
+    combo.opts = comboOptions(q, state.idx.get(combo.deskId));
+    combo.active = 0;
+    renderCombo(root);
+  }
+  function closeCombo(root, restore) {
+    root = root || document.querySelector('#inspector .member-combo');
+    if (!root) return;
+    const pop = root.querySelector('.mc-pop'), inp = root.querySelector('.mc-input');
+    if (pop) pop.hidden = true;
+    if (inp) {
+      inp.setAttribute('aria-expanded', 'false');
+      if (restore) { const d = state.idx.get(root.dataset.desk); inp.value = d ? nameOf(d) : ''; }
+    }
+    combo.opts = [];
+  }
+  function chooseCombo(i) {
+    const o = combo.opts[i], deskId = combo.deskId;
+    closeCombo(null, true);
+    if (!o || !deskId || !state.idx.has(deskId)) return;
+    if (o.kind === 'member') { if (!o.here) assignMember(deskId, o.m.id); }
+    else if (o.kind === 'clear') assignMember(deskId, null);
+    else if (o.kind === 'custom') { const d = state.idx.get(deskId); mutate(() => { delete d.member; delete d.team; d.name = o.text.slice(0, 40); }); toast(`'${o.text}' 지정 (명단에 없는 이름)`, { icon: 'edit', ms: 1800 }); }
+    else if (o.kind === 'new') openMemberDialog(null, (m) => assignMember(deskId, m.id), { name: o.text });
+  }
+  function bindCombo(el) {
+    el.addEventListener('focusin', (e) => {
+      if (!e.target.matches || !e.target.matches('.mc-input')) return;
+      const root = e.target.closest('.member-combo');
+      e.target.select();
+      refreshCombo(root, ''); // 처음에는 전체 (자리 없는 사람 먼저)
+    });
+    el.addEventListener('input', (e) => {
+      if (!e.target.matches || !e.target.matches('.mc-input')) return;
+      refreshCombo(e.target.closest('.member-combo'), e.target.value);
+    });
+    el.addEventListener('keydown', (e) => {
+      if (!e.target.matches || !e.target.matches('.mc-input')) return;
+      const root = e.target.closest('.member-combo'), pop = root.querySelector('.mc-pop');
+      const n = combo.opts.length;
+      const move = (d) => { if (pop.hidden) { refreshCombo(root, e.target.value); return; } if (n) { combo.active = (combo.active + d + n) % n; renderCombo(root); } };
+      if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); move(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); move(-1); }
+      else if (e.key === 'PageDown') { e.preventDefault(); e.stopPropagation(); if (n) { combo.active = Math.min(n - 1, combo.active + 6); renderCombo(root); } }
+      else if (e.key === 'PageUp') { e.preventDefault(); e.stopPropagation(); if (n) { combo.active = Math.max(0, combo.active - 6); renderCombo(root); } }
+      else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); if (!pop.hidden && n) chooseCombo(combo.active); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCombo(root, true); e.target.blur(); }
+      else if (e.key === 'Tab') closeCombo(root, true);
+    });
+    el.addEventListener('pointerdown', (e) => {
+      const opt = e.target.closest && e.target.closest('.mc-opt');
+      if (opt) { e.preventDefault(); chooseCombo(+opt.dataset.oi); return; }
+      const clr = e.target.closest && e.target.closest('[data-mc-clear]');
+      if (clr) { e.preventDefault(); const root = clr.closest('.member-combo'); closeCombo(root); assignMember(root.dataset.desk, null); }
+    });
+    el.addEventListener('pointermove', (e) => {
+      const opt = e.target.closest && e.target.closest('.mc-opt');
+      if (!opt || +opt.dataset.oi === combo.active) return;
+      combo.active = +opt.dataset.oi;
+      el.querySelectorAll('.mc-opt').forEach((x) => x.classList.toggle('active', +x.dataset.oi === combo.active));
+    });
+    el.addEventListener('focusout', (e) => {
+      if (!e.target.matches || !e.target.matches('.mc-input')) return;
+      const root = e.target.closest('.member-combo');
+      setTimeout(() => { if (root.isConnected && !root.contains(document.activeElement)) closeCombo(root, true); }, 120);
+    });
   }
 
   /* --- 구성원 패널 --- */
@@ -2752,7 +2865,7 @@
   function focusName() {
     if (state.mode !== 'edit') return;
     if (window.innerWidth <= 900) document.body.classList.add('show-right');
-    const n = $('#inspector [data-f="name"]');
+    const n = $('#inspector [data-f="memberSearch"]') || $('#inspector [data-f="name"]');
     if (n) { n.focus(); n.select(); }
   }
 

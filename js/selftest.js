@@ -279,7 +279,7 @@
     api.mutate(() => { d0.name = '댄'; });
     await raf();
     ok('이름표 렌더링', document.querySelectorAll('#L-labels .lbl.person').length === 1);
-    ok('인스펙터: 책상은 구성원 드롭다운 (직접 입력 이름 표시)', !!document.querySelector('#inspector select[data-f="member"] option[value="__keep"]') && document.querySelector('#inspector select[data-f="member"]').value === '__keep');
+    ok('인스펙터: 책상은 이름 검색칸 (지정된 이름 표시)', !!document.querySelector('#inspector [data-f="memberSearch"]') && document.querySelector('#inspector [data-f="memberSearch"]').value === '댄');
 
     // 3. 드래그 이동 (실제 포인터 이벤트)
     const el = st.els.get(d0.id);
@@ -473,12 +473,34 @@
     ok('R1 엑셀 두 열 붙여넣기 → 팀 4 · 구성원 9 (제목 줄·공백 정리)', RR().teams.length === 4 && RR().members.length === 9 && RR().teams[1].name === 'SCM', RR().teams.map((t) => t.name).join(',') + ' / ' + RR().members.length);
     const dR = seatAt(626, 80);
     api.select(dR.id); await raf();
-    const selEl = document.querySelector('#inspector select[data-f="member"]');
-    ok('R2 책상 선택 → 구성원 드롭다운 (팀별 묶음)', !!selEl && selEl.querySelectorAll('optgroup').length >= 4 && selEl.querySelectorAll('option').length >= 10);
     const dan = RR().members.find((m) => m.name === '댄');
-    selEl.value = dan.id; selEl.dispatchEvent(new Event('change', { bubbles: true }));
-    await raf();
-    ok('R3 드롭다운에서 선택 → 자리 지정 + 이름표', st.idx.get(dR.id).member === dan.id && Array.from(document.querySelectorAll('#L-labels .nm')).some((t) => t.textContent === '댄'));
+    const mcIn = () => document.querySelector('#inspector [data-f="memberSearch"]');
+    const mcType = (v) => { const i = mcIn(); i.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); };
+    const mcKey = (k) => mcIn().dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    const mcOpts = () => Array.from(document.querySelectorAll('#inspector .mc-pop .mc-opt'));
+    mcIn().dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    ok('R2 검색칸에 커서 → 추천 인원 목록 (전체 9명 + 자리 없는 사람)', !document.querySelector('#inspector .mc-pop').hidden && mcOpts().filter((o) => !o.classList.contains('mc-extra')).length === 9 && document.querySelector('#inspector .mc-pop').textContent.includes('자리 없음'));
+    mcType('댄');
+    ok('R2b 이름 입력 → 일치하는 사람이 맨 위', mcOpts()[0] && mcOpts()[0].textContent.includes('댄') && mcOpts()[0].classList.contains('active'));
+    mcKey('Enter'); await raf();
+    ok('R3 Enter → 자리 지정 + 이름표', st.idx.get(dR.id).member === dan.id && Array.from(document.querySelectorAll('#L-labels .nm')).some((t) => t.textContent === '댄'));
+    const dS = seatAt(686, 220);
+    api.select(dS.id); await raf();
+    mcType('ㅅ');
+    const sOpts = mcOpts().filter((o) => !o.classList.contains('mc-extra')).map((o) => o.querySelector('.mc-name').textContent);
+    ok('R3b 초성 검색 (ㅅ → 스테파니·샐리가 먼저, 헤시·토마스는 뒤)', sOpts.length === 4 && ['스테파니', '샐리'].includes(sOpts[0]) && ['스테파니', '샐리'].includes(sOpts[1]) && sOpts.slice(2).sort().join() === ['토마스', '헤시'].sort().join(), sOpts.join(','));
+    const second = sOpts[1];
+    mcKey('ArrowDown'); mcKey('Enter'); await raf();
+    ok('R3c 방향키 ↓ 로 두 번째 사람 선택', api.nameOf(st.idx.get(dS.id)) === second, api.nameOf(st.idx.get(dS.id)));
+    mcType('SCM');
+    ok('R3d 팀 이름으로도 검색', mcOpts().filter((o) => !o.classList.contains('mc-extra')).length === 3);
+    mcKey('Escape'); await raf();
+    ok('R3e Esc → 닫히고 원래 이름 복원', document.querySelector('#inspector .mc-pop').hidden && mcIn().value === second && api.nameOf(st.idx.get(dS.id)) === second);
+    mcType('방문자');
+    const extra = mcOpts().find((o) => o.textContent.includes('명단에 없는 이름'));
+    extra.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+    ok('R3f 명단에 없는 이름도 지정', st.idx.get(dS.id).name === '방문자' && !st.idx.get(dS.id).member);
+    api.assignMember(dS.id, null);
     const d2 = seatAt(686, 80);
     api.assignMember(d2.id, dan.id);
     ok('R4 같은 사람을 다른 책상에 → 이전 자리는 자동으로 비움', st.idx.get(d2.id).member === dan.id && !st.idx.get(dR.id).member);
@@ -518,9 +540,8 @@
     const code2 = await api.encodeShare(st.doc, 'r'); const back2 = await api.decodeShare(code2);
     ok('R13 공유 링크에 구성원 연결 유지', back2.doc.items.some((i) => i.member === heshi.id));
     api.select(target.id); await raf();
-    const sel2 = document.querySelector('#inspector select[data-f="member"]');
-    sel2.value = ''; sel2.dispatchEvent(new Event('change', { bubbles: true }));
-    ok('R14 드롭다운 "빈 자리" → 자리 비움', !st.idx.get(target.id).member && !st.idx.get(target.id).name);
+    document.querySelector('#inspector [data-mc-clear]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+    ok('R14 검색칸의 × → 자리 비움', !st.idx.get(target.id).member && !st.idx.get(target.id).name);
 
     // 12. 보기 모드: 클릭 선택
     api.setMode('view');
