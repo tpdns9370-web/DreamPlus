@@ -86,7 +86,7 @@
   const TEAM_COLORS = ['#6366F1', '#0EA5E9', '#10B981', '#F59E0B', '#EF4444', '#EC4899', '#8B5CF6', '#14B8A6', '#F97316', '#84CC16', '#06B6D4', '#A855F7'];
   const ITEM_COLORS = ['#41464E', '#FBFAF7', '#EBDCC4', '#A9784F', '#7E8FA5', '#B4825A', '#93A3B5', '#A5B4FC', '#FDBA74', '#86EFAC', '#FDA4AF', '#C4B5FD', '#FDE68A', '#99F6E4'];
   const COLORABLE = new Set(['chair', 'chairExec', 'chairGuest', 'stool', 'round2', 'square2', 'round4', 'meet4', 'meet6', 'meet8', 'meetL', 'coffee', 'sideTable', 'sofa2', 'sofa3', 'lounge', 'booth', 'rug', 'cabinet', 'bookshelf', 'locker', 'partition', 'custom',
-    'rack', 'rack90', 'rack150', 'rack120d', 'rack150d', 'rack180d', 'box1', 'box2', 'box3', 'box4', 'box5', 'box6', 'boxMove', 'boxDoc']);
+    'rack', 'rack90', 'rack150', 'rack120d', 'rack150d', 'rack180d', 'ownRack80', 'ownRack120', 'ownRack70', 'ownRack90', 'box1', 'box2', 'box3', 'box4', 'box5', 'box6', 'boxMove', 'boxDoc']);
 
   /* ================================================================ state */
   const DEFAULT_PREFS = {
@@ -116,7 +116,7 @@
   const isFloor = (it) => !!(def(it).floor || it.floor);
   // 책상 위 소품(모니터·서류·박스 …)과 그것을 올려 둘 수 있는 면(책상·테이블·수납·랙)
   const isTop = (it) => !!def(it).top;
-  const isSurface = (it) => { const d = def(it); return !d.top && !!(d.seat || d.table || d.cat === 'storage' || d.cat === 'rack' || it.type === 'tv'); };
+  const isSurface = (it) => { const d = def(it); return !d.top && !!(d.seat || d.table || d.cat === 'storage' || d.cat === 'rack' || d.rack || it.type === 'tv'); };
   function pointOn(it, x, y, pad) {
     const [lx, ly] = rotVec(x - it.x, y - it.y, -(it.rot || 0));
     return Math.abs(lx) <= it.w / 2 + (pad || 0) && Math.abs(ly) <= it.h / 2 + (pad || 0);
@@ -293,6 +293,8 @@
       ['name', 'team', 'note', 'color', 'shape', 'group', 'member'].forEach((k) => { if (it[k]) n[k] = String(it[k]).slice(0, 200); });
       if (it.locked) n.locked = true;
       if (it.floor) n.floor = true;
+      if (+it.shelves > 0) n.shelves = Math.min(99, Math.round(+it.shelves));
+      if (+it.tall > 0) n.tall = Math.min(1000, Math.round(+it.tall));
       out.push(n);
     });
     const seen = new Set();
@@ -1304,18 +1306,23 @@
 
   /* ============================================================ placement */
   function tplParts(tpl) {
+    const seatParts = (type, w, h) => {
+      const ct = type === 'deskExec' ? 'chairExec' : 'chair', cw = S.TYPES[ct].w;
+      const dy = -(32 + cw / 2) / 2;
+      return [{ type, x: 0, y: r1(dy), rot: 0, w, h }, { type: ct, x: 0, y: r1(dy + h / 2 + 32), rot: 0, w: cw, h: cw }];
+    };
     if (tpl.custom) {
-      const c = tpl.custom;
+      const c = tpl.custom, bd = c.base && S.TYPES[c.base];
+      if (bd) { // 기존 아이템 모양 + 맞춤 크기
+        if (bd.seat && state.prefs.autoChair) return seatParts(bd.type, c.w, c.h);
+        return [{ type: bd.type, x: 0, y: 0, rot: 0, w: c.w, h: c.h, color: c.color || bd.color, shelves: c.shelves, tall: c.tall }];
+      }
       return [{ type: 'custom', x: 0, y: 0, rot: 0, w: c.w, h: c.h, shape: c.shape, color: c.color, name: c.name || '', floor: !!c.floor }];
     }
     const d = tpl.def;
     if (d.set) return d.set.map(([t, x, y, r]) => ({ type: t, x, y, rot: r, w: S.TYPES[t].w, h: S.TYPES[t].h }));
-    if (d.seat && state.prefs.autoChair) {
-      const ct = d.type === 'deskExec' ? 'chairExec' : 'chair', cw = S.TYPES[ct].w;
-      const dy = -(d.h / 2 + 32 + cw / 2 - d.h / 2) / 2;
-      return [{ type: d.type, x: 0, y: r1(dy), rot: 0, w: d.w, h: d.h }, { type: ct, x: 0, y: r1(dy + d.h / 2 + 32), rot: 0, w: cw, h: cw }];
-    }
-    return [{ type: d.type, x: 0, y: 0, rot: 0, w: d.w, h: d.h, color: d.color }];
+    if (d.seat && state.prefs.autoChair) return seatParts(d.type, d.w, d.h);
+    return [{ type: d.type, x: 0, y: 0, rot: 0, w: d.w, h: d.h, color: d.color, shelves: d.shelves, tall: d.tall }];
   }
   function partsBox(parts, rot) {
     let b = null;
@@ -1383,7 +1390,7 @@
       const [ox, oy] = rotVec(p.x, p.y, pl.rot);
       const it = { id: preview ? '_' : nid(), type: p.type, x: r1(pl.x + ox), y: r1(pl.y + oy), w: p.w, h: p.h, rot: norm((p.rot || 0) + pl.rot) };
       if (g) it.group = g;
-      ['shape', 'color', 'name'].forEach((k) => { if (p[k]) it[k] = p[k]; });
+      ['shape', 'color', 'name', 'shelves', 'tall'].forEach((k) => { if (p[k]) it[k] = p[k]; });
       if (p.floor) it.floor = true;
       return it;
     });
@@ -1661,7 +1668,7 @@
     if (!it) return hideTooltip();
     const t = $('#tooltip');
     const r = itemRoom(it), tm = teamOf(teamIdOf(it));
-    const sub = [typeName(it), `${Math.round(it.w)}×${Math.round(it.h)}cm`, r ? roomName(r) : '', tm ? tm.name : ''].filter(Boolean).join(' · ');
+    const sub = [typeName(it), `${Math.round(it.w)}×${Math.round(it.h)}cm`, it.tall ? `높이 ${it.tall}` : '', it.shelves ? `${it.shelves}칸` : '', r ? roomName(r) : '', tm ? tm.name : ''].filter(Boolean).join(' · ');
     t.innerHTML = `<b>${esc(nameOf(it) || typeName(it))}</b>${it.locked ? ' 🔒' : ''}<small>${esc(sub)}</small>${it.note ? `<small>📝 ${esc(it.note)}</small>` : ''}`;
     t.hidden = false;
     const tw = t.offsetWidth, th = t.offsetHeight;
@@ -1863,6 +1870,7 @@
     renderLabels(); renderRoomLabels(); renderUI();
     renderInspector(); renderPeople(); renderTeams(); renderLegend();
     $('#undoBtn').disabled = !hist.undo.length; $('#redoBtn').disabled = !hist.redo.length;
+    updateOwnedBadges();
     if (store.work) updateDirtyUI();
   }
   function lightRefresh() {
@@ -1878,7 +1886,8 @@
     if (cc.length) {
       s += `<div class="cat-sec" data-cat="mine"><button class="cat-head">내 아이템 <span class="n">${cc.length}</span>${ic('chevron')}</button><div class="cat-grid">`;
       cc.forEach((c) => {
-        s += `<div class="cat-card" tabindex="0" data-type="custom:${c.tid}" data-custom="${c.tid}" title="${esc(c.name)}">${S.thumb({ type: 'custom', w: c.w, h: c.h, color: c.color, shape: c.shape }, 110, 50)}<span class="nm">${esc(c.name || '사용자 아이템')}</span><span class="sz">${c.w}×${c.h}</span><button class="del" data-del="${c.tid}" title="삭제">${svgIcon('x')}</button></div>`;
+        const bd = c.base && S.TYPES[c.base];
+        s += `<div class="cat-card" tabindex="0" data-type="custom:${c.tid}" data-custom="${c.tid}" title="${esc(c.name)}${bd ? ' · ' + esc(bd.name) + ' 모양' : ''}">${S.thumb({ type: bd ? c.base : 'custom', w: c.w, h: c.h, color: c.color, shape: c.shape, shelves: c.shelves, tall: c.tall }, 110, 50)}<span class="nm">${esc(c.name || '사용자 아이템')}</span><span class="sz">${c.w}×${c.h}${c.shelves ? ` · ${c.shelves}칸` : ''}</span><button class="del" data-del="${c.tid}" title="삭제">${svgIcon('x')}</button></div>`;
       });
       s += '</div></div>';
     }
@@ -1888,12 +1897,23 @@
       const closed = !q && (store.closedCats || []).includes(c.cat) ? ' closed' : '';
       s += `<div class="cat-sec${closed}" data-cat="${c.cat}"><button class="cat-head">${c.label} <span class="n">${items.length}</span>${ic('chevron')}</button><div class="cat-grid">`;
       items.forEach((d) => {
-        const sz = d.set ? (d.desc || '세트') : `${d.w}×${d.h}`;
-        s += `<div class="cat-card" tabindex="0" data-type="${d.type}" title="${esc(d.desc || d.name)}">${S.thumb(d, 110, 50)}<span class="nm">${esc(d.name)}</span><span class="sz">${esc(sz)}</span></div>`;
+        const sz = d.set ? (d.desc || '세트') : d.tall ? `깊이 ${d.h} · ${d.shelves}칸` : `${d.w}×${d.h}`;
+        s += `<div class="cat-card" tabindex="0" data-type="${d.type}" title="${esc(d.desc || d.name)}">${d.owned ? `<span class="own-badge" data-own="${d.type}"></span>` : ''}${S.thumb(d, 110, 50)}<span class="nm">${esc(d.name)}</span><span class="sz">${esc(sz)}</span></div>`;
       });
       s += '</div></div>';
     });
     $('#catalog').innerHTML = s || '<div class="cat-empty">검색 결과가 없어요</div>';
+    if (state.doc) updateOwnedBadges();
+  }
+  /** 보유 집기: 카탈로그 카드에 '배치 n/보유' 표시 */
+  function updateOwnedBadges() {
+    $$('#catalog [data-own]').forEach((b) => {
+      const d = S.TYPES[b.dataset.own];
+      const n = state.doc.items.filter((i) => i.type === d.type).length;
+      b.textContent = `배치 ${n}/${d.owned}`;
+      b.className = 'own-badge ' + (n === d.owned ? 'done' : n > d.owned ? 'over' : '');
+      b.title = n > d.owned ? `보유 ${d.owned}개보다 ${n - d.owned}개 많이 배치했어요` : n === d.owned ? '보유 수량 모두 배치' : `보유 ${d.owned}개 중 ${n}개 배치`;
+    });
   }
   function tplFromCard(card) {
     if (card.dataset.custom) {
@@ -1961,11 +1981,26 @@
     cat.addEventListener('pointerup', up);
     cat.addEventListener('pointercancel', up);
     $('#catSearch').addEventListener('input', buildCatalog);
+    // 우클릭: 이 모양으로 크기만 바꿔 새 아이템 만들기
+    cat.addEventListener('contextmenu', (e) => {
+      const card = e.target.closest('.cat-card');
+      if (!card) return;
+      e.preventDefault();
+      const t = tplFromCard(card);
+      if (!t) return;
+      const c = card.dataset.custom && (store.customs || []).find((x) => x.tid === card.dataset.custom);
+      const d = c ? (c.base && S.TYPES[c.base]) : S.TYPES[card.dataset.type];
+      const shapeable = d && !d.set && !d.arch;
+      const entries = [{ label: '배치하기', icon: 'plus', fn: () => startPlacing(t.tpl, t.label) }];
+      if (shapeable) entries.push({ label: '이 모양으로 크기 바꿔 만들기', icon: 'sparkles', fn: () => openCustomModal(d.type) });
+      if (c) entries.push('-', { label: '내 아이템에서 삭제', icon: 'trash', danger: true, fn: () => { store.customs = (store.customs || []).filter((x) => x.tid !== c.tid); persist(); buildCatalog(); } });
+      openMenu(e.clientX, e.clientY, entries);
+    });
   }
 
   /* ---------------------------------------------------------- inspector */
   function fieldNum(f, val, unit, lbl) {
-    return `<div class="numf${lbl ? ' lbl' : ''}">${lbl ? `<label>${lbl}</label>` : ''}<input class="inp" type="number" step="1" data-f="${f}" value="${r1(val)}">${unit ? `<em>${unit}</em>` : ''}</div>`;
+    return `<div class="numf${lbl ? ' lbl' : ''}">${lbl ? `<label>${lbl}</label>` : ''}<input class="inp" type="number" step="1" data-f="${f}" value="${val === '' || val == null ? '' : r1(val)}"${val === '' ? ' placeholder="–"' : ''}>${unit ? `<em>${unit}</em>` : ''}</div>`;
   }
   function teamSelect(cur, f) {
     return `<select data-f="${f || 'team'}"><option value="">팀 없음</option>${allTeams().map((t) => `<option value="${t.id}"${t.id === cur ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}<option value="__new">+ 새 팀 만들기…</option></select>`;
@@ -2053,6 +2088,9 @@
     } else {
       s += `<div class="sec"><h4>크기 · 위치 ${it.locked ? '<span class="chip lock">' + ic('lock') + '잠김</span>' : ''}</h4><div class="grid2" style="margin-bottom:8px">${fieldNum('w', it.w, 'cm', 'W')}${fieldNum('h', it.h, 'cm', 'H')}</div><div class="grid2" style="margin-bottom:8px">${fieldNum('x', it.x, 'cm', 'X')}${fieldNum('y', it.y, 'cm', 'Y')}</div>`;
       s += `<div class="rot-row">${fieldNum('rot', it.rot || 0, '°', '↻')}<button class="btn soft icon" data-cmd="rot-90" title="-90°">${ic('rotccw')}</button><button class="btn soft icon" data-cmd="rot90" title="+90°">${ic('rotcw')}</button></div></div>`;
+      if (def(it).rack) {
+        s += `<div class="sec"><h4>랙 정보 <span>참고용</span></h4><div class="grid2">${fieldNum('shelves', it.shelves || '', '칸', '')}${fieldNum('tall', it.tall || '', 'cm', '↕')}</div><p class="hint" style="margin-top:6px">칸 수 · 높이는 도면 크기와 상관없는 메모예요 (도면에는 가로 W × 깊이 H 만 반영)</p></div>`;
+      }
       if (COLORABLE.has(it.type)) {
         s += `<div class="sec"><h4>색상</h4><div class="swatches"><button class="swatch none${!it.color ? ' on' : ''}" data-color="" title="기본"></button>${ITEM_COLORS.map((c) => `<button class="swatch${it.color === c ? ' on' : ''}" data-color="${c}" style="background:${c}" title="${c}"></button>`).join('')}<label class="swatch pick" title="직접 선택"><input type="color" data-f="color" value="${it.color || '#A5B4FC'}"></label></div></div>`;
       }
@@ -2189,6 +2227,11 @@
         return;
       }
       if (f === 'color' && it) { it.color = e.target.value; end(); renderAll(); return; }
+      if ((f === 'shelves' || f === 'tall') && it) {
+        const v = Math.round(parseFloat(e.target.value));
+        mutate(() => { if (isFinite(v) && v > 0) it[f] = Math.min(f === 'tall' ? 1000 : 99, v); else delete it[f]; });
+        return;
+      }
       if (['w', 'h', 'x', 'y', 'rot'].includes(f) && it) {
         const v = parseFloat(e.target.value);
         if (!isFinite(v)) { renderInspector(); return; }
@@ -2922,35 +2965,76 @@
   }
 
   /* ---------------------------------------------------------- custom item */
-  function openCustomModal() {
-    const st = { name: '', shape: 'rect', w: 100, h: 60, color: '#A5B4FC', floor: false, save: true };
-    const prev = () => { $('#cPrev').innerHTML = S.thumb({ type: 'custom', w: st.w, h: st.h, color: st.color, shape: st.shape }, 260, 100); };
+  function openCustomModal(preBase) {
+    // 기준 모양: 기본 도형 또는 기존 아이템(책상·의자·캐비닛·랙 …)의 모양을 그대로 쓰고 크기만 바꾼다
+    const groups = S.CATALOG.map((c) => ({ label: c.label, items: c.items.filter((d) => !d.set && !d.arch) })).filter((g) => g.items.length);
+    const st = { base: '', name: '', shape: 'rect', w: 100, h: 60, color: '#A5B4FC', colorSet: false, floor: false, save: true, shelves: '', tall: '' };
+    const bd = () => (st.base ? S.TYPES[st.base] : null);
+    const prev = () => {
+      const d = bd();
+      const color = d ? (st.colorSet ? st.color : d.color) : st.color;
+      $('#cPrev').innerHTML = S.thumb({ type: d ? d.type : 'custom', w: st.w, h: st.h, color, shape: st.shape, shelves: st.shelves || '', tall: st.tall || '' }, 260, 100);
+      $('#cDims').textContent = `${st.w} × ${st.h} cm${d ? ` · 기본 ${d.w} × ${d.h}` : ''}`;
+    };
     modal({
-      title: '사용자 아이템 만들기',
-      body: `<div class="custom-prev" id="cPrev"></div>
-        <label class="fld"><span>이름 (도면에 표시)</span><input class="inp" id="cName" placeholder="예: 안마의자, 택배함, 사내 카페 카운터" maxlength="30"></label>
-        <div class="fld"><span>모양</span><div class="shape-pick"><button data-shape="rect" class="on"><i class="sh"></i>사각형</button><button data-shape="round"><i class="sh round"></i>둥근 사각형</button><button data-shape="circle"><i class="sh circle"></i>원형</button></div></div>
-        <div class="grid2"><label class="fld"><span>가로 (cm)</span><input class="inp" id="cW" type="number" min="5" max="2000" value="100"></label><label class="fld"><span>세로 (cm)</span><input class="inp" id="cH" type="number" min="5" max="2000" value="60"></label></div>
-        <div class="fld"><span>색상</span><div class="swatches" id="cColors">${ITEM_COLORS.slice(1).map((c) => `<button class="swatch${c === st.color ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}<label class="swatch pick"><input type="color" id="cPick" value="#A5B4FC"></label></div></div>
-        <label class="check"><input type="checkbox" id="cFloor"><span>바닥재 (러그·매트처럼 겹침 검사 제외)</span></label>
+      title: '아이템 만들기',
+      body: `<div class="custom-prev" id="cPrev"></div><div class="hint" id="cDims" style="margin:-6px 0 10px;text-align:center"></div>
+        <label class="fld"><span>기준 모양</span><select id="cBase"><option value="">기본 도형 — 사각형 · 원형으로 직접 만들기</option>${groups.map((g) => `<optgroup label="${esc(g.label)}">${g.items.map((d) => `<option value="${d.type}">${esc(d.name)} (${d.w}×${d.h})</option>`).join('')}</optgroup>`).join('')}</select></label>
+        <label class="fld"><span id="cNameLbl">이름 (도면에 표시)</span><input class="inp" id="cName" placeholder="예: 안마의자, 택배함, 사내 카페 카운터" maxlength="30"></label>
+        <div class="fld" id="cShapeRow"><span>모양</span><div class="shape-pick"><button data-shape="rect" class="on"><i class="sh"></i>사각형</button><button data-shape="round"><i class="sh round"></i>둥근 사각형</button><button data-shape="circle"><i class="sh circle"></i>원형</button></div></div>
+        <div class="grid2"><label class="fld"><span>가로 (cm)</span><input class="inp" id="cW" type="number" min="5" max="2000" value="100"></label><label class="fld"><span id="cHLbl">세로 (cm)</span><input class="inp" id="cH" type="number" min="5" max="2000" value="60"></label></div>
+        <div class="grid2" id="cRackRow" hidden><label class="fld"><span>칸 수 (참고)</span><input class="inp" id="cShelves" type="number" min="1" max="99" placeholder="예: 4"></label><label class="fld"><span>높이 cm (참고)</span><input class="inp" id="cTall" type="number" min="1" max="1000" placeholder="예: 180"></label></div>
+        <div class="fld" id="cColorRow"><span>색상</span><div class="swatches" id="cColors">${ITEM_COLORS.slice(1).map((c) => `<button class="swatch${c === st.color ? ' on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}<label class="swatch pick"><input type="color" id="cPick" value="#A5B4FC"></label></div></div>
+        <label class="check" id="cFloorRow"><input type="checkbox" id="cFloor"><span>바닥재 (러그·매트처럼 겹침 검사 제외)</span></label>
         <label class="check"><input type="checkbox" id="cSave" checked><span>'내 아이템'에 저장해서 다시 쓰기</span></label>`,
       actions: [{ label: '취소', kind: 'soft' }, {
         label: '배치하기', kind: 'primary', icon: 'plus', fn: () => {
+          const d = bd();
           st.name = ($('#cName').value || '').trim();
-          st.w = clamp(+$('#cW').value || 100, 5, 2000); st.h = clamp(+$('#cH').value || 60, 5, 2000);
+          st.w = clamp(+$('#cW').value || st.w, 5, 2000); st.h = clamp(+$('#cH').value || st.h, 5, 2000);
           st.floor = $('#cFloor').checked; st.save = $('#cSave').checked;
-          const tpl = { tid: nid('c'), name: st.name || '사용자 아이템', shape: st.shape, w: st.w, h: st.h, color: st.color, floor: st.floor };
+          const sh = Math.round(+$('#cShelves').value), tl = Math.round(+$('#cTall').value);
+          const tpl = { tid: nid('c'), name: st.name || (d ? `${d.name.replace(/\s*\d+.*$/, '')} ${st.w}×${st.h}` : '사용자 아이템'), w: st.w, h: st.h };
+          if (d) {
+            tpl.base = d.type;
+            if (st.colorSet && COLORABLE.has(d.type)) tpl.color = st.color;
+            if (d.rack) { if (sh > 0) tpl.shelves = Math.min(99, sh); if (tl > 0) tpl.tall = Math.min(1000, tl); }
+          } else Object.assign(tpl, { shape: st.shape, color: st.color, floor: st.floor });
           if (st.save) { store.customs = (store.customs || []).concat([tpl]); persist(); buildCatalog(); }
           setTimeout(() => startPlacing({ custom: tpl }, tpl.name), 0);
         },
       }],
       onOpen: (root) => {
-        prev();
+        const sync = () => {
+          const d = bd();
+          $('#cShapeRow').hidden = !!d;
+          $('#cFloorRow').hidden = !!d;
+          $('#cRackRow').hidden = !(d && d.rack);
+          $('#cColorRow').hidden = !!(d && !COLORABLE.has(d.type));
+          $('#cNameLbl').textContent = d ? "이름 ('내 아이템' 목록에 표시)" : '이름 (도면에 표시)';
+          $('#cHLbl').textContent = d ? '세로 · 깊이 (cm)' : '세로 (cm)';
+          $('#cName').placeholder = d ? `예: ${d.name.replace(/\s*\d+.*$/, '')} (맞춤)` : '예: 안마의자, 택배함, 사내 카페 카운터';
+          prev();
+        };
+        $('#cBase', root).addEventListener('change', (e) => {
+          st.base = e.target.value;
+          const d = bd();
+          if (d) { // 기준 아이템 크기로 시작 → 길이만 바꾸면 됨
+            st.w = d.w; st.h = d.h; $('#cW').value = d.w; $('#cH').value = d.h;
+            $('#cShelves').value = d.shelves || ''; $('#cTall').value = d.tall || '';
+            st.shelves = d.shelves || ''; st.tall = d.tall || ''; st.colorSet = false;
+            $$('#cColors .swatch').forEach((x) => x.classList.remove('on')); // 색을 고르기 전엔 기본색
+          }
+          sync();
+          $('#cW').focus(); $('#cW').select();
+        });
         root.querySelector('.shape-pick').addEventListener('click', (e) => { const b = e.target.closest('[data-shape]'); if (!b) return; st.shape = b.dataset.shape; $$('.shape-pick button', root).forEach((x) => x.classList.toggle('on', x === b)); if (st.shape === 'circle') { $('#cH').value = $('#cW').value; st.h = st.w; } prev(); });
-        $('#cColors').addEventListener('click', (e) => { const b = e.target.closest('[data-c]'); if (!b) return; st.color = b.dataset.c; $$('#cColors .swatch').forEach((x) => x.classList.toggle('on', x === b)); prev(); });
-        $('#cPick').addEventListener('input', (e) => { st.color = e.target.value; prev(); });
+        $('#cColors').addEventListener('click', (e) => { const b = e.target.closest('[data-c]'); if (!b) return; st.color = b.dataset.c; st.colorSet = true; $$('#cColors .swatch').forEach((x) => x.classList.toggle('on', x === b)); prev(); });
+        $('#cPick').addEventListener('input', (e) => { st.color = e.target.value; st.colorSet = true; prev(); });
         ['cW', 'cH'].forEach((id) => $('#' + id).addEventListener('input', () => { st.w = clamp(+$('#cW').value || 1, 5, 2000); st.h = clamp(+$('#cH').value || 1, 5, 2000); prev(); }));
-        $('#cName').focus();
+        ['cShelves', 'cTall'].forEach((id) => $('#' + id).addEventListener('input', () => { st.shelves = Math.round(+$('#cShelves').value) || ''; st.tall = Math.round(+$('#cTall').value) || ''; prev(); }));
+        if (preBase && S.TYPES[preBase]) { $('#cBase').value = preBase; $('#cBase').dispatchEvent(new Event('change')); }
+        else { sync(); $('#cName').focus(); }
       },
     });
   }
@@ -3023,7 +3107,7 @@
     const gi = (g) => { if (!g) return 0; if (!gmap.has(g)) gmap.set(g, gmap.size + 1); return gmap.get(g); };
     const items = doc.items.map((it) => {
       const d = S.def(it.type), cust = it.type === 'custom';
-      const a = [ti(it.type), r1(it.x), r1(it.y), !cust && it.w === d.w ? 0 : r1(it.w), !cust && it.h === d.h ? 0 : r1(it.h), norm(it.rot || 0), it.name || '', it.team || '', gi(it.group), it.locked ? 1 : 0, it.color || '', it.shape || '', it.note || '', it.floor ? 1 : 0, it.member || ''];
+      const a = [ti(it.type), r1(it.x), r1(it.y), !cust && it.w === d.w ? 0 : r1(it.w), !cust && it.h === d.h ? 0 : r1(it.h), norm(it.rot || 0), it.name || '', it.team || '', gi(it.group), it.locked ? 1 : 0, it.color || '', it.shape || '', it.note || '', it.floor ? 1 : 0, it.member || '', it.shelves || 0, it.tall || 0];
       while (a.length > 3 && (a[a.length - 1] === '' || a[a.length - 1] === 0)) a.pop();
       return a;
     });
@@ -3043,6 +3127,8 @@
       if (a[12]) it.note = a[12];
       if (a[13]) it.floor = true;
       if (a[14]) it.member = a[14];
+      if (a[15]) it.shelves = a[15];
+      if (a[16]) it.tall = a[16];
       return it;
     });
     return { name: p.n || '', doc: normalizeDoc({ items, rooms: p.r || {}, teams: p.m || [] }) };
@@ -3352,7 +3438,7 @@
     $('#shareBtn').onclick = openShare;
     $('#moreBtn').onclick = openMoreMenu;
     $('#scnBtn').onclick = openScenarioList;
-    $('#customBtn').onclick = openCustomModal;
+    $('#customBtn').onclick = () => openCustomModal();
     $('#origPlanBtn').onclick = openOrigPlan;
     $('#galleryBtn').onclick = () => openGallery();
     $('#warnChip').onclick = () => { clearSelection(); const w = state.warnings.list[0]; if (w) selectItem(w.a, true); };
@@ -3417,7 +3503,7 @@
     window.__app = {
       state, store, server, P, S,
       api: {
-        select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc,
+        select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc, normalizeDoc,
         setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab,
         openCustomModal, openShare, openHelp, openGallery, persist, baseDoc, canon, isDirty,
         openSaveDialog, doSave, openScenarioList, openScenario, startNew, openVersions, deleteSel, duplicateSel,

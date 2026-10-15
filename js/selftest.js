@@ -1,7 +1,7 @@
 /* 개발용 자가 점검 — index.html?selftest 로 열면 실행된다 (일반 사용자에게는 로드되지 않음) */
 (async function () {
   'use strict';
-  const A = window.__app, st = A.state, api = A.api, P = A.P, S = A.S;
+  const A = window.__app, st = A.state, api = A.api, P = A.P, S = A.S, store = A.store;
   const out = [];
   let fails = 0;
   const ok = (name, cond, extra) => { out.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  — ' + extra : ''}`); if (!cond) fails++; };
@@ -542,6 +542,80 @@
     api.select(target.id); await raf();
     document.querySelector('#inspector [data-mc-clear]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
     ok('R14 검색칸의 × → 자리 비움', !st.idx.get(target.id).member && !st.idx.get(target.id).name);
+
+    // 11-f. 보유 랙 · 랙 칸 수 메모 · 기존 모양으로 아이템 만들기
+    api.setMode('edit');
+    const badge = (t) => document.querySelector(`#catalog [data-own="${t}"]`);
+    const OWN = { ownRack80: [1, 5, 200, 80], ownRack120: [2, 4, 180, 120], ownRack70: [1, 4, 180, 70], ownRack90: [2, 4, 210, 90] };
+    ok('O1 보유 랙 4종이 카탈로그에 (칸 수 · 높이 · 보유 수량)', Object.keys(OWN).every((t) => { const d = S.TYPES[t]; const o = OWN[t]; return d && d.owned === o[0] && d.shelves === o[1] && d.tall === o[2] && d.w === o[3] && d.rack && badge(t) && badge(t).textContent === `배치 ${items().filter((i) => i.type === t).length}/${o[0]}`; }),
+      Object.keys(OWN).map((t) => badge(t) && badge(t).textContent).join(','));
+    const n120 = items().filter((i) => i.type === 'ownRack120').length;
+    for (let i = 0; i < 2 - n120; i++) { api.startPlacing({ def: S.TYPES.ownRack120 }, 'r'); api.updateGhost(520 + i * 5, 840 + i * 120, true); api.placeNow(false); }
+    const r120 = items().filter((i) => i.type === 'ownRack120');
+    ok('O2 보유 수량만큼 배치 → 배지 완료', r120.length === 2 && badge('ownRack120').textContent === '배치 2/2' && badge('ownRack120').classList.contains('done'), badge('ownRack120').textContent);
+    ok('O3 배치한 보유 랙에 칸 수 · 높이 기록', r120.every((i) => i.shelves === 4 && i.tall === 180 && i.w === 120));
+    api.startPlacing({ def: S.TYPES.ownRack120 }, 'r'); api.updateGhost(560, 980, true); api.placeNow(false);
+    ok('O2b 보유보다 많이 배치 → 초과 표시', badge('ownRack120').classList.contains('over'));
+    key('z', { ctrlKey: true });
+    api.select(r120[0].id); await raf();
+    const shF = document.querySelector('#inspector [data-f="shelves"]'), tlF = document.querySelector('#inspector [data-f="tall"]');
+    ok('O4 랙 선택 → 인스펙터에 칸 수 · 높이 칸', !!shF && !!tlF && shF.value === '4' && tlF.value === '180');
+    shF.value = '6'; shF.dispatchEvent(new Event('change', { bubbles: true }));
+    ok('O4b 칸 수 수정', st.idx.get(r120[0].id).shelves === 6);
+    const tlF2 = document.querySelector('#inspector [data-f="tall"]'); tlF2.value = ''; tlF2.dispatchEvent(new Event('change', { bubbles: true }));
+    ok('O4c 높이 비우기 → 메모 삭제', !('tall' in st.idx.get(r120[0].id)) && st.idx.get(r120[0].id).shelves === 6);
+    api.select(items().find((i) => i.type === 'rack').id); await raf();
+    ok('O4d 일반 랙도 칸 수 메모 가능', !!document.querySelector('#inspector [data-f="shelves"]') && !document.querySelector('#inspector [data-f="shelves"]').value);
+    const code3 = await api.encodeShare(st.doc, 'r'); const back3 = await api.decodeShare(code3);
+    ok('O5 공유 링크에 칸 수 유지', back3.doc.items.some((i) => i.type === 'ownRack120' && i.shelves === 6 && !i.tall) && back3.doc.items.some((i) => i.type === 'ownRack120' && i.tall === 180));
+    const nd = api.normalizeDoc({ v: 1, items: [{ id: 'q1', type: 'rack', x: 1, y: 1, w: 90, h: 45, shelves: '5', tall: 9999 }, { id: 'q2', type: 'rack', x: 1, y: 1, w: 90, h: 45, shelves: -2 }], rooms: {}, teams: [] });
+    ok('O6 저장 데이터 정리: 칸 수 · 높이 숫자화/범위', nd.items[0].shelves === 5 && nd.items[0].tall === 1000 && !('shelves' in nd.items[1]), JSON.stringify(nd.items));
+
+    // 기존 아이템 모양으로 만들기
+    const nCust = (store.customs || []).length;
+    api.openCustomModal(); await raf();
+    const M = (s) => document.querySelector('#modalRoot ' + s);
+    ok('C1 만들기 창: 기준 모양 목록 (책상 · 의자 · 캐비닛 · 랙 · 보유 랙)', ['desk140', 'chair', 'cabinet', 'rack', 'ownRack90'].every((t) => !!M(`#cBase option[value="${t}"]`)) && !M('#cBase option[value="door"]') && !M('#cShapeRow').hidden);
+    const setBase = (t) => { const s = M('#cBase'); s.value = t; s.dispatchEvent(new Event('change', { bubbles: true })); };
+    const setNum = (id, v) => { const i = M('#' + id); i.value = String(v); i.dispatchEvent(new Event('input', { bubbles: true })); };
+    setBase('rack');
+    ok('C2 랙 선택 → 크기 · 칸 수 칸, 모양 선택 숨김', M('#cW').value === String(S.TYPES.rack.w) && !M('#cRackRow').hidden && M('#cShapeRow').hidden && !!M('#cPrev svg'));
+    setNum('cW', 200); setNum('cShelves', 3); setNum('cTall', 240);
+    ok('C2b 미리보기에 칸 수 표시', M('#cPrev').textContent.includes('3칸'));
+    M('[data-act="1"]').click(); await sleep(20);
+    const cRack = (store.customs || [])[nCust];
+    ok('C3 랙 모양 템플릿 저장 (가로 200 · 3칸)', !!cRack && cRack.base === 'rack' && cRack.w === 200 && cRack.h === S.TYPES.rack.h && cRack.shelves === 3 && cRack.tall === 240 && !!document.querySelector(`#catalog [data-custom="${cRack && cRack.tid}"] svg`), JSON.stringify(cRack));
+    ok('C3b 바로 배치 모드', !!st.placing && st.placing.parts.length === 1 && st.placing.parts[0].type === 'rack' && st.placing.parts[0].w === 200);
+    api.updateGhost(1500, 400, true); api.placeNow(false);
+    const placedRack = items()[items().length - 1];
+    ok('C4 배치 결과: 랙 모양 · 맞춤 크기 · 칸 수', placedRack.type === 'rack' && placedRack.w === 200 && placedRack.shelves === 3 && placedRack.tall === 240 && !placedRack.name, JSON.stringify(placedRack));
+    key('Escape');
+    api.openCustomModal('desk140'); await raf();
+    ok('C5 기준 모양 지정해서 열기 (우클릭 메뉴용)', M('#cBase').value === 'desk140' && M('#cW').value === '140' && M('#cRackRow').hidden);
+    setNum('cW', 160); setNum('cH', 70);
+    M('[data-act="1"]').click(); await sleep(20);
+    const pp = st.placing && st.placing.parts;
+    ok('C6 책상 모양 160×70 + 의자 자동', !!pp && pp.length === 2 && pp[0].type === 'desk140' && pp[0].w === 160 && pp[0].h === 70 && /^chair/.test(pp[1].type) && pp[1].y - pp[0].y > 55, JSON.stringify(pp));
+    api.updateGhost(1500, 700, true); api.placeNow(false);
+    const dk160 = items().find((i) => i.type === 'desk140' && i.w === 160 && i.h === 70);
+    ok('C6b 배치된 맞춤 책상은 좌석으로 인식', !!dk160 && !!S.def(dk160.type).seat);
+    key('Escape');
+    // 우클릭 메뉴
+    const cabCard = document.querySelector('#catalog .cat-card[data-type="cabinet"]');
+    cabCard.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 100, clientY: 300 }));
+    const mi = Array.from(document.querySelectorAll('#menu .mi')).find((b) => b.textContent.includes('크기 바꿔'));
+    ok('C7 카탈로그 우클릭 → "이 모양으로 크기 바꿔 만들기"', !!mi && !document.getElementById('menu').hidden);
+    if (mi) mi.click();
+    await raf();
+    ok('C7b 메뉴 → 캐비닛 모양으로 만들기 창', !!M('#cBase') && M('#cBase').value === 'cabinet');
+    if (M('[data-close]')) M('[data-close]').click();
+    api.openCustomModal(); await raf();
+    M('#cName').value = '안마의자'; setNum('cW', 80); setNum('cH', 160);
+    M('#cSave').checked = false;
+    M('[data-act="1"]').click(); await sleep(20);
+    ok('C8 기본 도형 만들기는 그대로 (이름 표시)', !!st.placing && st.placing.parts[0].type === 'custom' && st.placing.parts[0].name === '안마의자' && (store.customs || []).length === nCust + 2);
+    key('Escape');
+    store.customs = (store.customs || []).slice(0, nCust); api.persist();
 
     // 12. 보기 모드: 클릭 선택
     api.setMode('view');

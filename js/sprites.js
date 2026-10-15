@@ -287,6 +287,10 @@
     }
     s += rect(-w / 2 + 2, -h / 2 + 2, w - 4, 2.4, 0, 'fill="#A9B2BC"') + rect(-w / 2 + 2, h / 2 - 4.4, w - 4, 2.4, 0, 'fill="#A9B2BC"');
     [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([a, b]) => { s += rect(a * (w / 2 - 2.5) - 2.5, b * (h / 2 - 2.5) - 2.5, 5, 5, 0.6, 'fill="#5F6873"'); });
+    if (o.shelves) { // 칸 수 (참고) — 앞쪽 테두리 왼편에 작게
+      const fs = Math.max(5, Math.min(9, h * 0.22));
+      s += `<text x="${r1(-w / 2 + 7)}" y="${r1(h / 2 - 6.5)}" font-size="${r1(fs)}" font-weight="800" fill="#4B5563" opacity=".85">${o.shelves}칸${o.tall ? ' · H' + o.tall : ''}</text>`;
+    }
     return s;
   }
 
@@ -582,13 +586,19 @@
       { type: 'bookshelf', name: '책장', w: 120, h: 35, draw: bookshelf },
       { type: 'locker', name: '사물함', w: 90, h: 50, draw: locker },
     ] },
+    { cat: 'owned', label: '보유 랙 (현 사무실에서 이전)', icon: 'box', items: [
+      { type: 'ownRack80', name: '보유 랙 80×200', w: 80, h: 45, draw: rack, rack: true, shelves: 5, tall: 200, owned: 1, desc: '현 사무실 4층 비상계단 앞 · 가로 80 · 높이 200 · 5칸 · 1개' },
+      { type: 'ownRack120', name: '보유 랙 120×180', w: 120, h: 45, draw: rack, rack: true, shelves: 4, tall: 180, owned: 2, desc: '현 사무실 문 오른쪽 · 가로 120 · 높이 180 · 4칸 · 2개' },
+      { type: 'ownRack70', name: '보유 랙 70×180', w: 70, h: 45, draw: rack, rack: true, shelves: 4, tall: 180, owned: 1, desc: '현 사무실 복합기 앞자리 · 가로 70 · 높이 180 · 4칸 · 1개' },
+      { type: 'ownRack90', name: '보유 랙 90×210', w: 90, h: 45, draw: rack, rack: true, shelves: 4, tall: 210, owned: 2, desc: '현 사무실 복합기 설치 공간 · 가로 90 · 높이 210 · 4칸 · 2개' },
+    ] },
     { cat: 'rack', label: '랙 · 박스', icon: 'box', items: [
-      { type: 'rack90', name: '앵글 랙 90', w: 90, h: 45, draw: rack, desc: '900×450 · 박스를 위에 올릴 수 있어요' },
-      { type: 'rack', name: '앵글 랙 120', w: 120, h: 45, draw: rack, desc: '1200×450 · 박스를 위에 올릴 수 있어요' },
-      { type: 'rack150', name: '앵글 랙 150', w: 150, h: 45, draw: rack, desc: '1500×450 · 박스를 위에 올릴 수 있어요' },
-      { type: 'rack120d', name: '앵글 랙 120 (깊은)', w: 120, h: 60, draw: rack, desc: '1200×600 · 박스를 위에 올릴 수 있어요' },
-      { type: 'rack150d', name: '앵글 랙 150 (깊은)', w: 150, h: 60, draw: rack, desc: '1500×600 · 박스를 위에 올릴 수 있어요' },
-      { type: 'rack180d', name: '앵글 랙 180 (깊은)', w: 180, h: 60, draw: rack, desc: '1800×600 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack90', name: '앵글 랙 90', w: 90, h: 45, draw: rack, rack: true, desc: '900×450 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack', name: '앵글 랙 120', w: 120, h: 45, draw: rack, rack: true, desc: '1200×450 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack150', name: '앵글 랙 150', w: 150, h: 45, draw: rack, rack: true, desc: '1500×450 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack120d', name: '앵글 랙 120 (깊은)', w: 120, h: 60, draw: rack, rack: true, desc: '1200×600 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack150d', name: '앵글 랙 150 (깊은)', w: 150, h: 60, draw: rack, rack: true, desc: '1500×600 · 박스를 위에 올릴 수 있어요' },
+      { type: 'rack180d', name: '앵글 랙 180 (깊은)', w: 180, h: 60, draw: rack, rack: true, desc: '1800×600 · 박스를 위에 올릴 수 있어요' },
       { type: 'box1', name: '박스 1호', w: 22, h: 19, draw: box, top: true, desc: '우체국 1호 (22×19×9)' },
       { type: 'box2', name: '박스 2호', w: 27, h: 18, draw: box, top: true, desc: '우체국 2호 (27×18×15)' },
       { type: 'box3', name: '박스 3호', w: 34, h: 25, draw: box, top: true, desc: '우체국 3호 (34×25×21)' },
@@ -640,10 +650,11 @@
   function draw(item, accent) {
     const d = def(item.type);
     const color = item.color || d.color || '';
-    const key = `${item.type}|${item.w}|${item.h}|${color}|${accent || ''}|${item.shape || ''}`;
+    const shelves = item.shelves || '', tall = item.tall || '';
+    const key = `${item.type}|${item.w}|${item.h}|${color}|${accent || ''}|${item.shape || ''}|${shelves}|${tall}`;
     let s = cache.get(key);
     if (s === undefined) {
-      s = d.draw(item.w, item.h, { accent, color: color || undefined, shape: item.shape });
+      s = d.draw(item.w, item.h, { accent, color: color || undefined, shape: item.shape, shelves, tall });
       if (cache.size > 800) cache.clear();
       cache.set(key, s);
     }
@@ -669,7 +680,7 @@
     const w = d.w, h = d.h;
     const m = Math.max(w, h) * 0.08 + 4;
     const vb = `${r1(-w / 2 - m)} ${r1(-h / 2 - m)} ${r1(w + m * 2)} ${r1(h + m * 2)}`;
-    return `<svg viewBox="${vb}" width="${pw}" height="${ph}" preserveAspectRatio="xMidYMid meet">${draw({ type: d.type, w, h, color: d.color, shape: d.shape })}</svg>`;
+    return `<svg viewBox="${vb}" width="${pw}" height="${ph}" preserveAspectRatio="xMidYMid meet">${draw({ type: d.type, w, h, color: d.color, shape: d.shape, shelves: d.shelves, tall: d.tall })}</svg>`;
   }
 
   window.Sprites = { CATALOG, TYPES, def, draw, thumb, shade };
