@@ -652,6 +652,54 @@
     api.setMode('view');
     ok('P4 보기 모드에서도 시나리오 버튼 클릭 가능', hitOk(document.getElementById('scnBtn')));
 
+    // 11-h. 랜 · 콘센트 · AP 위치 표시
+    api.setMode('edit'); api.setTab('items');
+    const NET = ['lanWall', 'lanFloor', 'lanCable', 'outletWall', 'outletFloor', 'wifiAP', 'netSwitch'];
+    ok('N1 카탈로그에 랜 · 전기 · 네트워크 7종', NET.every((t) => S.TYPES[t] && document.querySelector(`#catalog .cat-sec[data-cat="net"] .cat-card[data-type="${t}"] svg`)));
+    const placeN = (t, x, y) => { api.startPlacing({ def: S.TYPES[t] }, t); api.updateGhost(x, y, true); api.placeNow(false); return st.idx.get(Array.from(st.sel)[0]); };
+    const nJack = placeN('lanWall', 839, 788); // 벽에 걸치게
+    ok('N2 벽에 붙인 랜 포트 → 벽 충돌 경고 없음', nJack.type === 'lanWall' && !st.warnings.ids.has(nJack.id));
+    const nDk = items().find((i) => S.def(i.type).seat && api.itemRoom(i) && api.itemRoom(i).id === 'r16' && !st.warnings.ids.has(i.id));
+    const nFb = placeN('lanFloor', nDk.x, nDk.y);
+    ok('N3 책상 밑 바닥 랜 박스 → 겹침 경고 없음', nFb.type === 'lanFloor' && !st.warnings.ids.has(nFb.id) && !st.warnings.ids.has(nDk.id));
+    const nKids = Array.from(document.querySelectorAll('#L-items > [data-id]'));
+    const zIdx = (id) => nKids.findIndex((e) => e.getAttribute('data-id') === id);
+    ok('N4 위치 표시는 책상 · 소품보다 위에 그림', zIdx(nFb.id) > zIdx(nDk.id) && zIdx(nFb.id) > Math.max(...items().filter((i) => S.def(i.type).top).map((i) => zIdx(i.id))));
+    const nFbPos = [nFb.x, nFb.y], nDkY = nDk.y;
+    api.select(nDk.id); key('ArrowDown', { shiftKey: true });
+    ok('N5 책상을 옮겨도 바닥 랜 박스는 제자리', st.idx.get(nDk.id).y === nDkY + 10 && st.idx.get(nFb.id).x === nFbPos[0] && st.idx.get(nFb.id).y === nFbPos[1]);
+    key('z', { ctrlKey: true });
+    st.sel = new Set([nJack.id]); st.selRoom = null; api.renderAll(); await raf();
+    const nPF = document.querySelector('#inspector [data-f="ports"]');
+    ok('N6 인스펙터: 포트 수 칸', !!nPF && document.querySelector('#inspector').textContent.includes('설비 정보'));
+    nPF.value = '2'; nPF.dispatchEvent(new Event('change', { bubbles: true }));
+    ok('N6b 포트 수 2 → 도면 배지 표시', st.idx.get(nJack.id).ports === 2 && st.els.get(nJack.id).textContent.includes('2'));
+    await typeInto('#inspector [data-f="name"]', 'L-12', true);
+    ok('N7 이름(포트 번호) 도면에 표시', st.idx.get(nJack.id).name === 'L-12' && document.getElementById('plan').textContent.includes('L-12'));
+    const code4 = await api.encodeShare(st.doc, 'n'); const back4 = await api.decodeShare(code4);
+    ok('N8 공유 링크 · 저장 데이터에 포트 수 유지', back4.doc.items.some((i) => i.type === 'lanWall' && i.ports === 2 && i.name === 'L-12') && api.normalizeDoc({ items: [{ id: 'z', type: 'lanWall', x: 1, y: 1, ports: '4' }], rooms: {}, teams: [] }).items[0].ports === 4);
+    const nCb = placeN('lanCable', 839, 1013);
+    st.sel = new Set([nCb.id]); st.selRoom = null; api.renderAll(); await raf();
+    const nWF = document.querySelector('#inspector [data-f="w"]'); nWF.value = '350'; nWF.dispatchEvent(new Event('change', { bubbles: true })); await raf();
+    ok('N9 랜선: 길이 조절 · 안내', st.idx.get(nCb.id).w === 350 && document.querySelector('#inspector').textContent.includes('길이 350cm'));
+    placeN('outletWall', 1020, 900); placeN('wifiAP', 839, 1100);
+    api.selectRoom('r6a'); await raf();
+    const nSum = (document.querySelector('#inspector .net-sum') || {}).textContent || '';
+    ok('N10 공간 정보: 랜 · 전기 요약', /랜 포트 1곳 \(2포트\)/.test(nSum) && nSum.includes('콘센트 1곳') && nSum.includes('AP 1') && nSum.includes('랜선 약 3.5m'), nSum);
+    ok('N11 카탈로그 개수 배지', (document.querySelector('#catalog [data-cnt="lanWall"]') || {}).textContent === '1개' && !document.querySelector('#catalog [data-cnt="lanWall"]').hidden);
+    const nNetSw = document.querySelector('[data-pref="net"]');
+    nNetSw.click(); await raf();
+    ok('N12 표시 탭에서 끄면 도면에서 숨김', st.prefs.net === false && !st.els.has(nJack.id) && !document.getElementById('plan').textContent.includes('L-12') && st.els.has(nDk.id));
+    key('a', { ctrlKey: true });
+    ok('N12b 숨긴 표시는 전체 선택에서 빠짐', !st.sel.has(nJack.id) && st.sel.has(nDk.id));
+    api.select(nDk.id); nNetSw.click(); await raf();
+    ok('N12c 다시 켜면 표시', st.prefs.net === true && st.els.has(nJack.id));
+    const nSw = placeN('netSwitch', nDk.x, nDk.y);
+    const nSwPos = [nSw.x, nSw.y];
+    api.select(nDk.id); key('ArrowDown', { shiftKey: true });
+    ok('N13 스위치 허브는 책상 위 소품처럼 함께 이동', st.idx.get(nSw.id).y === nSwPos[1] + 10 && st.idx.get(nFb.id).y === nFbPos[1]);
+    key('z', { ctrlKey: true });
+
     // 12. 보기 모드: 클릭 선택
     api.setMode('view');
     api.fit(false); await raf();

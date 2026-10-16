@@ -536,8 +536,79 @@
     return shadowR(w, h, rx) + rect(-w / 2, -h / 2, w, h, rx, st) + rect(-w / 2 + 3, -h / 2 + 3, w - 6, Math.min(10, h * 0.25), Math.max(1, rx * 0.6), 'fill="#fff" opacity=".22"');
   }
 
+  /* ------------------------------------------------- 랜 · 전기 · 네트워크 (위치 표시) */
+  // 도면에서 잘 보이도록 배지 모양으로 그린다. 포트(구) 수는 오른쪽 위 작은 숫자.
+  function portBadge(w, h, n, c) {
+    if (!(n > 1)) return '';
+    const r = Math.max(5, Math.min(w, h) * 0.24), x = w / 2 - r * 0.55, y = -h / 2 + r * 0.55;
+    return circ(x, y, r, `fill="#fff" stroke="${c}" stroke-width="${r1(r * 0.22)}"`) +
+      `<text x="${r1(x)}" y="${r1(y + 0.4)}" font-size="${r1(r * 1.25)}" font-weight="800" fill="${shade(c, -0.25)}" text-anchor="middle" dominant-baseline="central">${n}</text>`;
+  }
+  function rj45(k, fill, pin) { // 랜 단자 정면 (아래가 좁은 모양)
+    const w = 13 * k, h = 10 * k, x0 = -w / 2, y0 = -h / 2 + 0.6 * k, x1 = w / 2, y1 = y0 + h, ym = y0 + h * 0.62;
+    let s = `<path d="M${r1(x0)} ${r1(y0)}H${r1(x1)}V${r1(ym)}H${r1(x1 - w * 0.2)}V${r1(y1)}H${r1(x0 + w * 0.2)}V${r1(ym)}H${r1(x0)}Z" fill="${fill}"/>`;
+    for (let i = 0; i < 6; i++) s += rect(x0 + w * 0.17 + i * w * 0.12, y0 + h * 0.1, w * 0.06, h * 0.26, 0, `fill="${pin}"`);
+    return s;
+  }
+  function lanJack(w, h, o) {
+    const c = o.color || '#2563EB', r = Math.min(w, h) / 2;
+    return shadowC(r, r) + circ(0, 0, r, `fill="${c}" stroke="#fff" stroke-width="${r1(r * 0.13)}"`) +
+      circ(0, 0, r, `fill="none" stroke="${shade(c, -0.3)}" stroke-width=".8"`) + rj45(r / 13, '#fff', c) + portBadge(w, h, o.ports, c);
+  }
+  function lanFloorBox(w, h, o) {
+    const c = o.color || '#1D4ED8', m = Math.min(w, h), rx = m * 0.18;
+    return shadowR(w, h, rx) + rect(-w / 2, -h / 2, w, h, rx, `fill="${c}" stroke="#fff" stroke-width="${r1(m * 0.08)}"`) +
+      rect(-w / 2 + m * 0.14, -h / 2 + m * 0.14, w - m * 0.28, h - m * 0.28, rx * 0.6, `fill="none" stroke="${shade(c, 0.35)}" stroke-width=".9" stroke-dasharray="2 1.6"`) +
+      rj45(m / 26, '#fff', c) + portBadge(w, h, o.ports, c);
+  }
+  function outletFace(k, c) { // 한국형 콘센트: 둥근 면 + 구멍 두 개
+    return circ(0, 0, 8.4 * k, 'fill="#fff"') + circ(-3.4 * k, 0, 1.5 * k, `fill="${shade(c, -0.55)}"`) + circ(3.4 * k, 0, 1.5 * k, `fill="${shade(c, -0.55)}"`) +
+      rect(-1.2 * k, -8.4 * k, 2.4 * k, 1.8 * k, 0.4, `fill="${shade(c, -0.2)}"`) + rect(-1.2 * k, 6.6 * k, 2.4 * k, 1.8 * k, 0.4, `fill="${shade(c, -0.2)}"`);
+  }
+  function outlet(w, h, o) {
+    const c = o.color || '#F59E0B', r = Math.min(w, h) / 2;
+    return shadowC(r, r) + circ(0, 0, r, `fill="${c}" stroke="#fff" stroke-width="${r1(r * 0.13)}"`) +
+      circ(0, 0, r, `fill="none" stroke="${shade(c, -0.3)}" stroke-width=".8"`) + outletFace(r / 13, c) + portBadge(w, h, o.ports, c);
+  }
+  function outletFloor(w, h, o) {
+    const c = o.color || '#EA8C00', m = Math.min(w, h), rx = m * 0.18;
+    return shadowR(w, h, rx) + rect(-w / 2, -h / 2, w, h, rx, `fill="${c}" stroke="#fff" stroke-width="${r1(m * 0.08)}"`) +
+      rect(-w / 2 + m * 0.14, -h / 2 + m * 0.14, w - m * 0.28, h - m * 0.28, rx * 0.6, `fill="none" stroke="${shade(c, 0.4)}" stroke-width=".9" stroke-dasharray="2 1.6"`) +
+      outletFace(m / 26, c) + portBadge(w, h, o.ports, c);
+  }
+  function wifiAP(w, h, o) {
+    const c = o.color || '#7C3AED', r = Math.min(w, h) / 2;
+    let s = shadowC(r, r) + circ(0, 0, r, `fill="#fff" stroke="${c}" stroke-width="${r1(r * 0.14)}"`);
+    const cy = r * 0.38;
+    [0.32, 0.56, 0.8].forEach((f, i) => {
+      const a = r * f, ang = 0.78;
+      s += `<path d="M${r1(-a * Math.sin(ang))} ${r1(cy - a * Math.cos(ang))}A${r1(a)} ${r1(a)} 0 0 1 ${r1(a * Math.sin(ang))} ${r1(cy - a * Math.cos(ang))}" fill="none" stroke="${c}" stroke-width="${r1(r * 0.12)}" stroke-linecap="round" opacity="${1 - i * 0.18}"/>`;
+    });
+    return s + circ(0, cy, r * 0.1, `fill="${c}"`);
+  }
+  function cable(w, h, o) { // 랜선 경로: 가로 길이 = 선 길이
+    const c = o.color || '#2563EB', t = Math.max(2.2, Math.min(5, h * 0.36)), e = Math.max(2.6, h * 0.42);
+    return rect(-w / 2, -h / 2, w, h, 0, 'fill="#000" fill-opacity="0"') +
+      line(-w / 2 + e, 0, w / 2 - e, 0, `stroke="#fff" stroke-width="${r1(t + 2.4)}" stroke-linecap="round" opacity=".85"`) +
+      line(-w / 2 + e, 0, w / 2 - e, 0, `stroke="${c}" stroke-width="${r1(t)}" stroke-linecap="round" stroke-dasharray="${r1(t * 3.2)} ${r1(t * 1.8)}"`) +
+      circ(-w / 2 + e, 0, e, `fill="#fff" stroke="${c}" stroke-width="${r1(t * 0.7)}"`) + circ(w / 2 - e, 0, e, `fill="${c}"`);
+  }
+  function netSwitch(w, h, o) {
+    const c = o.color || '#2B3036';
+    let s = shadowR(w, h, 2) + rect(-w / 2, -h / 2, w, h, 2, `fill="${c}" stroke="${shade(c, -0.35)}" stroke-width=".8"`);
+    s += rect(-w / 2 + 2, -h / 2 + 2, w - 4, h * 0.22, 1, `fill="${shade(c, 0.12)}"`);
+    const n = Math.max(4, Math.min(24, o.ports || 8)), pw = (w - 8) / n;
+    for (let i = 0; i < n; i++) {
+      const x = -w / 2 + 4 + i * pw;
+      s += rect(x + pw * 0.12, h / 2 - h * 0.34, pw * 0.76, h * 0.22, 0.4, 'fill="#11151A" stroke="#4B5563" stroke-width=".3"');
+      s += circ(x + pw * 0.5, h / 2 - h * 0.46, Math.min(0.9, pw * 0.16), `fill="${i % 3 === 2 ? '#F59E0B' : '#22C55E'}"`);
+    }
+    return s;
+  }
+
   /* ---------------------------------------------------------------- catalog */
   // seat: 사람이 앉는 자리(이름·아바타 표시), chair: 의자류, floor: 충돌검사 제외, arch: 건축요소
+  // mark: 위치 표시(랜·콘센트 등) — 항상 맨 위에 그리고, 책상과 같이 움직이지 않음 · 표시 탭에서 숨길 수 있음
   const CATALOG = [
     { cat: 'desk', label: '책상', icon: 'desk', items: [
       { type: 'desk140', name: '책상 140', w: 140, h: 60, draw: desk, seat: true, desc: '드림플러스 기본 책상 (1,400mm)' },
@@ -608,6 +679,15 @@
       { type: 'boxMove', name: '이사 박스', w: 60, h: 40, draw: box, top: true, desc: '대형 (60×40×40)' },
       { type: 'boxDoc', name: '문서 보관 박스', w: 33, h: 26, draw: archiveBox, top: true, desc: 'A4 서류 보관용' },
     ] },
+    { cat: 'net', label: '랜 · 전기 · 네트워크', icon: 'plug', items: [
+      { type: 'lanWall', name: '랜 포트 (벽)', w: 30, h: 30, draw: lanJack, mark: true, floor: true, round: true, portUnit: '포트', desc: '벽면 랜 단자 위치 · 이름 칸에 포트 번호(예: L-12)를 적으면 도면에 표시' },
+      { type: 'lanFloor', name: '랜 포트 (바닥)', w: 30, h: 30, draw: lanFloorBox, mark: true, floor: true, portUnit: '포트', desc: '바닥 박스 랜 단자 위치' },
+      { type: 'lanCable', name: '랜선 (경로)', w: 200, h: 10, draw: cable, mark: true, floor: true, cable: true, desc: '가로 길이를 늘려 선 경로 표시 · 회전해서 꺾기' },
+      { type: 'outletWall', name: '전기 콘센트 (벽)', w: 30, h: 30, draw: outlet, mark: true, floor: true, round: true, portUnit: '구', desc: '벽면 콘센트 위치' },
+      { type: 'outletFloor', name: '전기 콘센트 (바닥)', w: 30, h: 30, draw: outletFloor, mark: true, floor: true, portUnit: '구', desc: '바닥 콘센트 위치' },
+      { type: 'wifiAP', name: '무선 AP (천장)', w: 34, h: 34, draw: wifiAP, mark: true, floor: true, round: true, desc: '천장 와이파이 AP 위치' },
+      { type: 'netSwitch', name: '스위치 허브 · 공유기', w: 44, h: 28, draw: netSwitch, top: true, ports: 8, portUnit: '포트', desc: '책상 · 랙 위에 올릴 수 있어요' },
+    ] },
     { cat: 'lounge', label: '라운지', icon: 'sofa', items: [
       { type: 'sofa2', name: '2인 소파', w: 150, h: 80, draw: (w, h, o) => sofa(w, h, o, 2) },
       { type: 'sofa3', name: '3인 소파', w: 210, h: 85, draw: (w, h, o) => sofa(w, h, o, 3) },
@@ -650,11 +730,11 @@
   function draw(item, accent) {
     const d = def(item.type);
     const color = item.color || d.color || '';
-    const shelves = item.shelves || '', tall = item.tall || '';
-    const key = `${item.type}|${item.w}|${item.h}|${color}|${accent || ''}|${item.shape || ''}|${shelves}|${tall}`;
+    const shelves = item.shelves || '', tall = item.tall || '', ports = item.ports || '';
+    const key = `${item.type}|${item.w}|${item.h}|${color}|${accent || ''}|${item.shape || ''}|${shelves}|${tall}|${ports}`;
     let s = cache.get(key);
     if (s === undefined) {
-      s = d.draw(item.w, item.h, { accent, color: color || undefined, shape: item.shape, shelves, tall });
+      s = d.draw(item.w, item.h, { accent, color: color || undefined, shape: item.shape, shelves, tall, ports });
       if (cache.size > 800) cache.clear();
       cache.set(key, s);
     }
@@ -680,7 +760,7 @@
     const w = d.w, h = d.h;
     const m = Math.max(w, h) * 0.08 + 4;
     const vb = `${r1(-w / 2 - m)} ${r1(-h / 2 - m)} ${r1(w + m * 2)} ${r1(h + m * 2)}`;
-    return `<svg viewBox="${vb}" width="${pw}" height="${ph}" preserveAspectRatio="xMidYMid meet">${draw({ type: d.type, w, h, color: d.color, shape: d.shape, shelves: d.shelves, tall: d.tall })}</svg>`;
+    return `<svg viewBox="${vb}" width="${pw}" height="${ph}" preserveAspectRatio="xMidYMid meet">${draw({ type: d.type, w, h, color: d.color, shape: d.shape, shelves: d.shelves, tall: d.tall, ports: d.ports })}</svg>`;
   }
 
   window.Sprites = { CATALOG, TYPES, def, draw, thumb, shade };

@@ -86,11 +86,12 @@
   const TEAM_COLORS = ['#6366F1', '#0EA5E9', '#10B981', '#F59E0B', '#EF4444', '#EC4899', '#8B5CF6', '#14B8A6', '#F97316', '#84CC16', '#06B6D4', '#A855F7'];
   const ITEM_COLORS = ['#41464E', '#FBFAF7', '#EBDCC4', '#A9784F', '#7E8FA5', '#B4825A', '#93A3B5', '#A5B4FC', '#FDBA74', '#86EFAC', '#FDA4AF', '#C4B5FD', '#FDE68A', '#99F6E4'];
   const COLORABLE = new Set(['chair', 'chairExec', 'chairGuest', 'stool', 'round2', 'square2', 'round4', 'meet4', 'meet6', 'meet8', 'meetL', 'coffee', 'sideTable', 'sofa2', 'sofa3', 'lounge', 'booth', 'rug', 'cabinet', 'bookshelf', 'locker', 'partition', 'custom',
-    'rack', 'rack90', 'rack150', 'rack120d', 'rack150d', 'rack180d', 'ownRack80', 'ownRack120', 'ownRack70', 'ownRack90', 'box1', 'box2', 'box3', 'box4', 'box5', 'box6', 'boxMove', 'boxDoc']);
+    'rack', 'rack90', 'rack150', 'rack120d', 'rack150d', 'rack180d', 'ownRack80', 'ownRack120', 'ownRack70', 'ownRack90', 'box1', 'box2', 'box3', 'box4', 'box5', 'box6', 'boxMove', 'boxDoc',
+    'lanWall', 'lanFloor', 'lanCable', 'outletWall', 'outletFloor', 'wifiAP', 'netSwitch']);
 
   /* ================================================================ state */
   const DEFAULT_PREFS = {
-    labels: true, roomLabels: true, dims: false, removed: true, grid: true, context: true,
+    labels: true, roomLabels: true, dims: false, removed: true, grid: true, context: true, net: true,
     snap: true, gridSize: 5, guides: true, distances: true, warnings: true, autoChair: true,
   };
   const state = {
@@ -116,6 +117,8 @@
   const isFloor = (it) => !!(def(it).floor || it.floor);
   // 책상 위 소품(모니터·서류·박스 …)과 그것을 올려 둘 수 있는 면(책상·테이블·수납·랙)
   const isTop = (it) => !!def(it).top;
+  const isMark = (it) => !!def(it).mark; // 랜 · 콘센트 · AP 위치 표시
+  const netHidden = (it) => isMark(it) && state.prefs.net === false;
   const isSurface = (it) => { const d = def(it); return !d.top && !!(d.seat || d.table || d.cat === 'storage' || d.cat === 'rack' || d.rack || it.type === 'tv'); };
   function pointOn(it, x, y, pad) {
     const [lx, ly] = rotVec(x - it.x, y - it.y, -(it.rot || 0));
@@ -295,6 +298,7 @@
       if (it.floor) n.floor = true;
       if (+it.shelves > 0) n.shelves = Math.min(99, Math.round(+it.shelves));
       if (+it.tall > 0) n.tall = Math.min(1000, Math.round(+it.tall));
+      if (+it.ports > 0) n.ports = Math.min(99, Math.round(+it.ports));
       out.push(n);
     });
     const seen = new Set();
@@ -1021,7 +1025,9 @@
   function renderItems() {
     // 책상 위 소품은 항상 가구 위에 그린다
     const items = state.doc.items;
-    L.items.innerHTML = items.filter((i) => !isTop(i)).map(itemMarkup).join('') + items.filter(isTop).map(itemMarkup).join('');
+    // 랜 · 콘센트 같은 위치 표시는 맨 위에 (표시 탭에서 끌 수 있음)
+    L.items.innerHTML = items.filter((i) => !isTop(i) && !isMark(i)).map(itemMarkup).join('') + items.filter(isTop).map(itemMarkup).join('') +
+      (state.prefs.net === false ? '' : items.filter(isMark).map(itemMarkup).join(''));
     state.els = new Map();
     for (const el of L.items.children) state.els.set(el.getAttribute('data-id'), el);
   }
@@ -1039,9 +1045,10 @@
     let s = '';
     state.doc.items.forEach((it) => {
       const full = nameOf(it);
-      if (!full) return;
+      if (!full || netHidden(it)) return;
       const person = isSeat(it) || isChair(it);
-      const [ax, ay] = person ? seatAnchor(it) : [it.x, it.y];
+      // 위치 표시(랜·콘센트)는 아이콘을 가리지 않게 바로 아래에
+      const [ax, ay] = person ? seatAnchor(it) : isMark(it) && !def(it).cable ? [it.x, it.y + Math.max(it.w, it.h) / 2 + 13 * sc] : [it.x, it.y];
       const cls = 'lbl ' + (person ? 'person' : 'tag') + (state.sel.has(it.id) ? ' sel' : '') + (hits.has(it.id) ? ' hit' : '') + (isDimmed(it) ? ' dim' : '');
       const name = full.length > 14 ? full.slice(0, 13) + '…' : full;
       if (person) {
@@ -1357,14 +1364,14 @@
       const c = tpl.custom, bd = c.base && S.TYPES[c.base];
       if (bd) { // 기존 아이템 모양 + 맞춤 크기
         if (bd.seat && state.prefs.autoChair) return seatParts(bd.type, c.w, c.h);
-        return [{ type: bd.type, x: 0, y: 0, rot: 0, w: c.w, h: c.h, color: c.color || bd.color, shelves: c.shelves, tall: c.tall }];
+        return [{ type: bd.type, x: 0, y: 0, rot: 0, w: c.w, h: c.h, color: c.color || bd.color, shelves: c.shelves, tall: c.tall, ports: bd.ports }];
       }
       return [{ type: 'custom', x: 0, y: 0, rot: 0, w: c.w, h: c.h, shape: c.shape, color: c.color, name: c.name || '', floor: !!c.floor }];
     }
     const d = tpl.def;
     if (d.set) return d.set.map(([t, x, y, r]) => ({ type: t, x, y, rot: r, w: S.TYPES[t].w, h: S.TYPES[t].h }));
     if (d.seat && state.prefs.autoChair) return seatParts(d.type, d.w, d.h);
-    return [{ type: d.type, x: 0, y: 0, rot: 0, w: d.w, h: d.h, color: d.color, shelves: d.shelves, tall: d.tall }];
+    return [{ type: d.type, x: 0, y: 0, rot: 0, w: d.w, h: d.h, color: d.color, shelves: d.shelves, tall: d.tall, ports: d.ports }];
   }
   function partsBox(parts, rot) {
     let b = null;
@@ -1432,7 +1439,7 @@
       const [ox, oy] = rotVec(p.x, p.y, pl.rot);
       const it = { id: preview ? '_' : nid(), type: p.type, x: r1(pl.x + ox), y: r1(pl.y + oy), w: p.w, h: p.h, rot: norm((p.rot || 0) + pl.rot) };
       if (g) it.group = g;
-      ['shape', 'color', 'name', 'shelves', 'tall'].forEach((k) => { if (p[k]) it[k] = p[k]; });
+      ['shape', 'color', 'name', 'shelves', 'tall', 'ports'].forEach((k) => { if (p[k]) it[k] = p[k]; });
       if (p.floor) it.floor = true;
       return it;
     });
@@ -1677,7 +1684,7 @@
         if (!d.moved) { if (d.roomId) selectRoom(d.roomId); else clearSelection(); }
         else {
           const x0 = Math.min(d.a[0], d.b[0]), y0 = Math.min(d.a[1], d.b[1]), x1 = Math.max(d.a[0], d.b[0]), y1 = Math.max(d.a[1], d.b[1]);
-          const hit = state.doc.items.filter((it) => { if (it.locked) return false; const b = aabb(it); return b.x0 < x1 && b.x1 > x0 && b.y0 < y1 && b.y1 > y0; }).map((it) => it.id);
+          const hit = state.doc.items.filter((it) => { if (it.locked || netHidden(it)) return false; const b = aabb(it); return b.x0 < x1 && b.x1 > x0 && b.y0 < y1 && b.y1 > y0; }).map((it) => it.id);
           const ids = expandGroups(hit);
           if (d.add) ids.forEach((id) => state.sel.add(id)); else state.sel = ids;
           state.selRoom = null; onSelectionChange();
@@ -1710,7 +1717,7 @@
     if (!it) return hideTooltip();
     const t = $('#tooltip');
     const r = itemRoom(it), tm = teamOf(teamIdOf(it));
-    const sub = [typeName(it), `${Math.round(it.w)}×${Math.round(it.h)}cm`, it.tall ? `높이 ${it.tall}` : '', it.shelves ? `${it.shelves}칸` : '', r ? roomName(r) : '', tm ? tm.name : ''].filter(Boolean).join(' · ');
+    const sub = [typeName(it), def(it).cable ? `길이 ${Math.round(it.w)}cm` : `${Math.round(it.w)}×${Math.round(it.h)}cm`, it.tall ? `높이 ${it.tall}` : '', it.shelves ? `${it.shelves}칸` : '', it.ports ? `${it.ports}${def(it).portUnit || '포트'}` : '', r ? roomName(r) : '', tm ? tm.name : ''].filter(Boolean).join(' · ');
     t.innerHTML = `<b>${esc(nameOf(it) || typeName(it))}</b>${it.locked ? ' 🔒' : ''}<small>${esc(sub)}</small>${it.note ? `<small>📝 ${esc(it.note)}</small>` : ''}`;
     t.hidden = false;
     const tw = t.offsetWidth, th = t.offsetHeight;
@@ -1877,7 +1884,7 @@
     });
   }
   function selectAll() {
-    state.sel = new Set(state.doc.items.filter((i) => !i.locked).map((i) => i.id));
+    state.sel = new Set(state.doc.items.filter((i) => !i.locked && !netHidden(i)).map((i) => i.id));
     state.selRoom = null; onSelectionChange();
   }
 
@@ -1939,8 +1946,8 @@
       const closed = !q && (store.closedCats || []).includes(c.cat) ? ' closed' : '';
       s += `<div class="cat-sec${closed}" data-cat="${c.cat}"><button class="cat-head">${c.label} <span class="n">${items.length}</span>${ic('chevron')}</button><div class="cat-grid">`;
       items.forEach((d) => {
-        const sz = d.set ? (d.desc || '세트') : d.tall ? `깊이 ${d.h} · ${d.shelves}칸` : `${d.w}×${d.h}`;
-        s += `<div class="cat-card" tabindex="0" data-type="${d.type}" title="${esc(d.desc || d.name)}">${d.owned ? `<span class="own-badge" data-own="${d.type}"></span>` : ''}${S.thumb(d, 110, 50)}<span class="nm">${esc(d.name)}</span><span class="sz">${esc(sz)}</span></div>`;
+        const sz = d.set ? (d.desc || '세트') : d.tall ? `깊이 ${d.h} · ${d.shelves}칸` : d.cable ? '길이 조절' : d.mark ? '위치 표시' : `${d.w}×${d.h}`;
+        s += `<div class="cat-card" tabindex="0" data-type="${d.type}" title="${esc(d.desc || d.name)}">${d.owned ? `<span class="own-badge" data-own="${d.type}"></span>` : d.mark ? `<span class="own-badge cnt" data-cnt="${d.type}" hidden></span>` : ''}${S.thumb(d, 110, 50)}<span class="nm">${esc(d.name)}</span><span class="sz">${esc(sz)}</span></div>`;
       });
       s += '</div></div>';
     });
@@ -1949,6 +1956,10 @@
   }
   /** 보유 집기: 카탈로그 카드에 '배치 n/보유' 표시 */
   function updateOwnedBadges() {
+    $$('#catalog [data-cnt]').forEach((b) => {
+      const n = state.doc.items.filter((i) => i.type === b.dataset.cnt).length;
+      b.hidden = !n; b.textContent = `${n}개`; b.title = `도면에 ${n}개 표시됨`;
+    });
     $$('#catalog [data-own]').forEach((b) => {
       const d = S.TYPES[b.dataset.own];
       const n = state.doc.items.filter((i) => i.type === d.type).length;
@@ -2130,6 +2141,10 @@
     } else {
       s += `<div class="sec"><h4>크기 · 위치 ${it.locked ? '<span class="chip lock">' + ic('lock') + '잠김</span>' : ''}</h4><div class="grid2" style="margin-bottom:8px">${fieldNum('w', it.w, 'cm', 'W')}${fieldNum('h', it.h, 'cm', 'H')}</div><div class="grid2" style="margin-bottom:8px">${fieldNum('x', it.x, 'cm', 'X')}${fieldNum('y', it.y, 'cm', 'Y')}</div>`;
       s += `<div class="rot-row">${fieldNum('rot', it.rot || 0, '°', '↻')}<button class="btn soft icon" data-cmd="rot-90" title="-90°">${ic('rotccw')}</button><button class="btn soft icon" data-cmd="rot90" title="+90°">${ic('rotcw')}</button></div></div>`;
+      if (def(it).portUnit || def(it).cable || def(it).mark) {
+        const dd = def(it);
+        s += `<div class="sec"><h4>${dd.cable ? '랜선 정보' : '설비 정보'} <span>참고용</span></h4>${dd.portUnit ? `<div class="grid2">${fieldNum('ports', it.ports || '', dd.portUnit, '')}<div></div></div>` : ''}${dd.cable ? `<p class="hint">길이 <b>${Math.round(it.w)}cm</b> — 위 W 칸이나 모서리 핸들로 늘리고, 회전해서 꺾인 경로는 여러 개를 이어 붙이세요</p>` : ''}<p class="hint" style="margin-top:6px">이름 칸에 포트 번호나 용도(예: L-12, 프린터용)를 적으면 도면에 표시돼요 · 표시 탭에서 한꺼번에 숨길 수 있어요</p></div>`;
+      }
       if (def(it).rack) {
         s += `<div class="sec"><h4>랙 정보 <span>참고용</span></h4><div class="grid2">${fieldNum('shelves', it.shelves || '', '칸', '')}${fieldNum('tall', it.tall || '', 'cm', '↕')}</div><p class="hint" style="margin-top:6px">칸 수 · 높이는 도면 크기와 상관없는 메모예요 (도면에는 가로 W × 깊이 H 만 반영)</p></div>`;
       }
@@ -2176,6 +2191,21 @@
     return s;
   }
 
+  /** 공간 안의 랜 포트 · 콘센트 · AP · 랜선 요약 */
+  function netSummary(roomId) {
+    const its = state.doc.items.filter((i) => isMark(i) || i.type === 'netSwitch').filter((i) => { const rr = itemRoom(i); return rr && rr.id === roomId; });
+    if (!its.length) return '';
+    const grp = (types) => its.filter((i) => types.includes(i.type));
+    const ports = (arr) => arr.reduce((a, i) => a + (i.ports || 1), 0);
+    const lan = grp(['lanWall', 'lanFloor']), pw = grp(['outletWall', 'outletFloor']), ap = grp(['wifiAP']), cb = grp(['lanCable']), sw = grp(['netSwitch']);
+    return [
+      lan.length ? `랜 포트 <b>${lan.length}곳</b>${ports(lan) > lan.length ? ` (${ports(lan)}포트)` : ''}` : '',
+      pw.length ? `콘센트 <b>${pw.length}곳</b>${ports(pw) > pw.length ? ` (${ports(pw)}구)` : ''}` : '',
+      ap.length ? `AP <b>${ap.length}</b>` : '',
+      sw.length ? `스위치 <b>${sw.length}</b>` : '',
+      cb.length ? `랜선 약 <b>${(cb.reduce((a, i) => a + i.w, 0) / 100).toFixed(1)}m</b>` : '',
+    ].filter(Boolean).join(' · ');
+  }
   function roomInspector(r) {
     const edit = state.mode === 'edit';
     const st = state.stats[r.id], pur = P.PURPOSES[roomPurpose(r)];
@@ -2189,6 +2219,8 @@
       s += `<label class="fld"><span>용도</span><select data-f="purpose">${Object.entries(P.PURPOSES).map(([k, v]) => `<option value="${k}"${k === roomPurpose(r) ? ' selected' : ''}>${v.label}</option>`).join('')}</select></label>`;
     }
     s += `<div class="sec"><dl class="kv"><dt>용도</dt><dd><span class="chip"><span class="d" style="background:${pur.color}"></span>${pur.label}</span></dd><dt>계약 인원</dt><dd>${r.capacity}인</dd><dt>책상</dt><dd>${st.desks}개 · 배정 ${st.named}명</dd><dt>크기</dt><dd>${r.dims.w} × ${r.dims.h} cm</dd><dt>면적</dt><dd>약 ${area.toFixed(1)}㎡ (${(area / 3.3058).toFixed(1)}평)</dd>${st.desks ? `<dt>1인당 면적</dt><dd>약 ${(area / st.desks).toFixed(1)}㎡</dd>` : ''}</dl>${r.dims.wNote ? `<p class="hint">※ ${esc(r.dims.wNote)} · 세로는 실측</p>` : ''}${edit && r.merged ? `<p class="hint">${esc(r.merged)}</p>` : ''}</div>`;
+    const net = netSummary(r.id);
+    if (net) s += `<div class="sec"><h4>랜 · 전기</h4><p class="net-sum">${net}</p></div>`;
     if (r.photos && r.photos.length) {
       s += `<div class="sec"><h4>현장 사진</h4><div class="photos">${r.photos.map((p) => `<button data-photo="${p}" title="${esc(P.PHOTO_LABEL[p] || '')}"><img src="assets/photos/${p}-thumb.jpg" alt="${esc(P.PHOTO_LABEL[p] || '')}" loading="lazy"></button>`).join('')}</div></div>`;
     }
@@ -2227,7 +2259,7 @@
         fly: () => { const it = primaryOf(items); if (it) flyToItem(it); },
         roomFly: () => flyToRoom(ROOM_BY_ID[state.selRoom]),
         roomClear: () => clearRoom(state.selRoom),
-        roomSelectAll: () => { const id = state.selRoom; state.sel = new Set(state.doc.items.filter((i) => !i.locked && itemRoom(i) && itemRoom(i).id === id).map((i) => i.id)); state.selRoom = null; onSelectionChange(); },
+        roomSelectAll: () => { const id = state.selRoom; state.sel = new Set(state.doc.items.filter((i) => !i.locked && !netHidden(i) && itemRoom(i) && itemRoom(i).id === id).map((i) => i.id)); state.selRoom = null; onSelectionChange(); },
         bulkNames, bulkClear,
       }[cmd] || (() => {}))();
     });
@@ -2269,7 +2301,7 @@
         return;
       }
       if (f === 'color' && it) { it.color = e.target.value; end(); renderAll(); return; }
-      if ((f === 'shelves' || f === 'tall') && it) {
+      if ((f === 'shelves' || f === 'tall' || f === 'ports') && it) {
         const v = Math.round(parseFloat(e.target.value));
         mutate(() => { if (isFinite(v) && v > 0) it[f] = Math.min(f === 'tall' ? 1000 : 99, v); else delete it[f]; });
         return;
@@ -3149,7 +3181,7 @@
     const gi = (g) => { if (!g) return 0; if (!gmap.has(g)) gmap.set(g, gmap.size + 1); return gmap.get(g); };
     const items = doc.items.map((it) => {
       const d = S.def(it.type), cust = it.type === 'custom';
-      const a = [ti(it.type), r1(it.x), r1(it.y), !cust && it.w === d.w ? 0 : r1(it.w), !cust && it.h === d.h ? 0 : r1(it.h), norm(it.rot || 0), it.name || '', it.team || '', gi(it.group), it.locked ? 1 : 0, it.color || '', it.shape || '', it.note || '', it.floor ? 1 : 0, it.member || '', it.shelves || 0, it.tall || 0];
+      const a = [ti(it.type), r1(it.x), r1(it.y), !cust && it.w === d.w ? 0 : r1(it.w), !cust && it.h === d.h ? 0 : r1(it.h), norm(it.rot || 0), it.name || '', it.team || '', gi(it.group), it.locked ? 1 : 0, it.color || '', it.shape || '', it.note || '', it.floor ? 1 : 0, it.member || '', it.shelves || 0, it.tall || 0, it.ports || 0];
       while (a.length > 3 && (a[a.length - 1] === '' || a[a.length - 1] === 0)) a.pop();
       return a;
     });
@@ -3171,6 +3203,7 @@
       if (a[14]) it.member = a[14];
       if (a[15]) it.shelves = a[15];
       if (a[16]) it.tall = a[16];
+      if (a[17]) it.ports = a[17];
       return it;
     });
     return { name: p.n || '', doc: normalizeDoc({ items, rooms: p.r || {}, teams: p.m || [] }) };
@@ -3550,7 +3583,7 @@
         select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc, normalizeDoc,
         setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab,
         openCustomModal, openShare, openHelp, openGallery, persist, baseDoc, canon, isDirty,
-        openSaveDialog, doSave, copyScenario, findSc, openScenarioList, openScenario, startNew, openVersions, deleteSel, duplicateSel,
+        openSaveDialog, doSave, copyScenario, findSc, netSummary, openScenarioList, openScenario, startNew, openVersions, deleteSel, duplicateSel,
         assignMember, editRoster, importRosterText, parseRosterText, openRosterPaste, openTeamMgr, openMemberDialog, fillSeatsWithTeam, nameOf, teamIdOf, memberById, seatOfMember,
         setView: (k, x, y) => { const r = stageSize(); Object.assign(state.view, { k, tx: r.w / 2 - x * k, ty: r.h / 2 - y * k }); applyView(); },
       },

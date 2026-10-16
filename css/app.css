@@ -227,6 +227,9 @@ body.mode-edit #shareBtn:hover { background: var(--panel-2); }
 .cat-card .own-badge { position: absolute; top: 4px; left: 4px; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 700; line-height: 16px; background: var(--warn-soft); color: var(--warn); font-variant-numeric: tabular-nums; pointer-events: none; }
 .cat-card .own-badge.done { background: var(--ok-soft); color: var(--ok); }
 .cat-card .own-badge.over { background: var(--danger-soft); color: var(--danger); }
+.cat-card .own-badge.cnt { background: #E8EEFF; color: #1D4ED8; }
+.net-sum { margin: 0; font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.net-sum b { color: var(--text); }
 .cat-sec[data-cat="owned"] .cat-card svg { margin-top: 10px; }
 .cat-empty { color: var(--text-3); font-size: 12.5px; text-align: center; padding: 20px 0; }
 
