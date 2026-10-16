@@ -123,57 +123,58 @@
     <svg id="plan" xmlns="http://www.w3.org/2000/svg" aria-label="17층 평면도">
       <defs>
         <style id="svgStyle">
+          /* 이 블록은 문서 전체에 적용되므로 도면(#plan) 안으로 한정 — .ghost/.lbl 같은 이름이 HTML 버튼 · 입력칸을 막지 않게 */
           text { font-family: 'Pretendard Variable', Pretendard, 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
           .sp-sh { fill: #1b1f24; opacity: .09; }
-          .it { cursor: pointer; }
-          .it.locked { cursor: default; }
-          .it.dim, .lbl.dim { opacity: .28; }
-          .ctx-room { fill: #E4E1DA; stroke: #CFCBC2; stroke-width: 6; }
-          .ctx-txt { fill: #A29D93; font-size: 26px; font-weight: 700; letter-spacing: 1px; text-anchor: middle; dominant-baseline: central; }
-          .note-txt { fill: #B5AFA4; font-size: 24px; font-weight: 700; letter-spacing: 6px; text-anchor: middle; dominant-baseline: central; }
-          .room-floor { cursor: default; }
-          .room-floor.sel { stroke: #4F46E5; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
-          .room-hover { fill: none; stroke: #4F46E5; stroke-opacity: .5; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
-          .rw-line { stroke: #E5484D; stroke-width: 3.5; stroke-dasharray: 14 9; opacity: .8; }
-          .rw-tag rect { fill: #E5484D; }
-          .rw-tag text { fill: #fff; font-size: 11px; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
-          .dim-line { stroke: #8D8F96; stroke-width: 1; vector-effect: non-scaling-stroke; }
-          .dim-txt { fill: #6E727A; font-weight: 600; text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: #EFEBE4; stroke-width: 4px; stroke-linejoin: round; }
-          .lbl { pointer-events: none; }
-          .lbl .pill { fill: #fff; stroke: rgba(17, 24, 39, .1); stroke-width: 1; }
-          .lbl.person .pill { fill: #fff; }
-          .lbl .nm { fill: #1C1F24; font-size: 12px; font-weight: 650; dominant-baseline: central; }
-          .lbl .ini { fill: #fff; font-size: 10px; font-weight: 800; text-anchor: middle; dominant-baseline: central; }
-          .lbl.tag .pill { fill: rgba(255,255,255,.92); }
-          .lbl.tag .nm { fill: #4B5059; font-weight: 600; font-size: 11px; }
-          .lbl.sel .pill { stroke: #4F46E5; stroke-width: 1.6; }
-          .lbl.hit .pill { stroke: #F59E0B; stroke-width: 2.2; }
-          .rlbl { cursor: pointer; }
-          .rlbl .bg { fill: #fff; stroke: rgba(17, 24, 39, .08); }
-          .rlbl.sel .bg { stroke: #4F46E5; stroke-width: 1.8; }
-          .rlbl .t1 { fill: #16181D; font-size: 15px; font-weight: 750; dominant-baseline: central; }
-          .rlbl .t2 { fill: #6B7079; font-size: 11.5px; font-weight: 550; dominant-baseline: central; }
-          .rlbl .bar-bg { fill: #ECEAE6; }
-          .warn-shape { fill: rgba(229, 72, 77, .10); stroke: #E5484D; stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
-          .sel-box { fill: none; stroke: #4F46E5; stroke-width: 1.6; vector-effect: non-scaling-stroke; pointer-events: none; }
-          .sel-box.group { stroke-dasharray: 5 4; }
-          .hover-box { fill: none; stroke: #4F46E5; stroke-opacity: .55; stroke-width: 1.4; vector-effect: non-scaling-stroke; pointer-events: none; }
-          .handle { fill: #fff; stroke: #4F46E5; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-          .handle.rot { fill: #4F46E5; stroke: #fff; cursor: grab; }
-          .rot-stem { stroke: #4F46E5; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
-          .guide { stroke: #EC4899; stroke-width: 1; vector-effect: non-scaling-stroke; }
-          .dist line { stroke: #EC4899; stroke-width: 1; vector-effect: non-scaling-stroke; }
-          .dist rect { fill: #EC4899; }
-          .dist text { fill: #fff; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
-          .marquee { fill: rgba(79, 70, 229, .08); stroke: #4F46E5; stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
-          .measure line.m { stroke: #0EA5E9; stroke-width: 2; vector-effect: non-scaling-stroke; }
-          .measure circle { fill: #fff; stroke: #0EA5E9; stroke-width: 2; vector-effect: non-scaling-stroke; }
-          .measure rect { fill: #0EA5E9; }
-          .measure text { fill: #fff; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
-          .ghost { opacity: .72; pointer-events: none; }
-          .ghost.bad .ghost-box { stroke: #E5484D; fill: rgba(229,72,77,.12); }
-          .ghost-box { fill: rgba(79,70,229,.06); stroke: #4F46E5; stroke-width: 1.5; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; }
-          .pulse { fill: none; stroke: #F59E0B; stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+          #plan .it { cursor: pointer; }
+          #plan .it.locked { cursor: default; }
+          #plan .it.dim, #plan .lbl.dim { opacity: .28; }
+          #plan .ctx-room { fill: #E4E1DA; stroke: #CFCBC2; stroke-width: 6; }
+          #plan .ctx-txt { fill: #A29D93; font-size: 26px; font-weight: 700; letter-spacing: 1px; text-anchor: middle; dominant-baseline: central; }
+          #plan .note-txt { fill: #B5AFA4; font-size: 24px; font-weight: 700; letter-spacing: 6px; text-anchor: middle; dominant-baseline: central; }
+          #plan .room-floor { cursor: default; }
+          #plan .room-floor.sel { stroke: #4F46E5; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+          #plan .room-hover { fill: none; stroke: #4F46E5; stroke-opacity: .5; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+          #plan .rw-line { stroke: #E5484D; stroke-width: 3.5; stroke-dasharray: 14 9; opacity: .8; }
+          #plan .rw-tag rect { fill: #E5484D; }
+          #plan .rw-tag text { fill: #fff; font-size: 11px; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
+          #plan .dim-line { stroke: #8D8F96; stroke-width: 1; vector-effect: non-scaling-stroke; }
+          #plan .dim-txt { fill: #6E727A; font-weight: 600; text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: #EFEBE4; stroke-width: 4px; stroke-linejoin: round; }
+          #plan .lbl { pointer-events: none; }
+          #plan .lbl .pill { fill: #fff; stroke: rgba(17, 24, 39, .1); stroke-width: 1; }
+          #plan .lbl.person .pill { fill: #fff; }
+          #plan .lbl .nm { fill: #1C1F24; font-size: 12px; font-weight: 650; dominant-baseline: central; }
+          #plan .lbl .ini { fill: #fff; font-size: 10px; font-weight: 800; text-anchor: middle; dominant-baseline: central; }
+          #plan .lbl.tag .pill { fill: rgba(255,255,255,.92); }
+          #plan .lbl.tag .nm { fill: #4B5059; font-weight: 600; font-size: 11px; }
+          #plan .lbl.sel .pill { stroke: #4F46E5; stroke-width: 1.6; }
+          #plan .lbl.hit .pill { stroke: #F59E0B; stroke-width: 2.2; }
+          #plan .rlbl { cursor: pointer; }
+          #plan .rlbl .bg { fill: #fff; stroke: rgba(17, 24, 39, .08); }
+          #plan .rlbl.sel .bg { stroke: #4F46E5; stroke-width: 1.8; }
+          #plan .rlbl .t1 { fill: #16181D; font-size: 15px; font-weight: 750; dominant-baseline: central; }
+          #plan .rlbl .t2 { fill: #6B7079; font-size: 11.5px; font-weight: 550; dominant-baseline: central; }
+          #plan .rlbl .bar-bg { fill: #ECEAE6; }
+          #plan .warn-shape { fill: rgba(229, 72, 77, .10); stroke: #E5484D; stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+          #plan .sel-box { fill: none; stroke: #4F46E5; stroke-width: 1.6; vector-effect: non-scaling-stroke; pointer-events: none; }
+          #plan .sel-box.group { stroke-dasharray: 5 4; }
+          #plan .hover-box { fill: none; stroke: #4F46E5; stroke-opacity: .55; stroke-width: 1.4; vector-effect: non-scaling-stroke; pointer-events: none; }
+          #plan .handle { fill: #fff; stroke: #4F46E5; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+          #plan .handle.rot { fill: #4F46E5; stroke: #fff; cursor: grab; }
+          #plan .rot-stem { stroke: #4F46E5; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+          #plan .guide { stroke: #EC4899; stroke-width: 1; vector-effect: non-scaling-stroke; }
+          #plan .dist line { stroke: #EC4899; stroke-width: 1; vector-effect: non-scaling-stroke; }
+          #plan .dist rect { fill: #EC4899; }
+          #plan .dist text { fill: #fff; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
+          #plan .marquee { fill: rgba(79, 70, 229, .08); stroke: #4F46E5; stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+          #plan .measure line.m { stroke: #0EA5E9; stroke-width: 2; vector-effect: non-scaling-stroke; }
+          #plan .measure circle { fill: #fff; stroke: #0EA5E9; stroke-width: 2; vector-effect: non-scaling-stroke; }
+          #plan .measure rect { fill: #0EA5E9; }
+          #plan .measure text { fill: #fff; font-weight: 700; text-anchor: middle; dominant-baseline: central; }
+          #plan .ghost { opacity: .72; pointer-events: none; }
+          #plan .ghost.bad .ghost-box { stroke: #E5484D; fill: rgba(229,72,77,.12); }
+          #plan .ghost-box { fill: rgba(79,70,229,.06); stroke: #4F46E5; stroke-width: 1.5; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; }
+          #plan .pulse { fill: none; stroke: #F59E0B; stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
         </style>
         <pattern id="hatch-out" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <rect width="22" height="22" fill="#E3E8EC"/><line x1="0" y1="0" x2="0" y2="22" stroke="#D5DCE2" stroke-width="5"/>

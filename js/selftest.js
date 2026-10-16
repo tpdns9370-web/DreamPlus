@@ -144,6 +144,29 @@
       api.openScenarioList(); await sleep(30);
       ok('S17 명단 문서는 시나리오 목록·삭제 목록에 안 나옴', !document.querySelector('#scnList [data-sid="team-roster"]'));
       document.querySelector('#modalRoot [data-close]').click();
+      // 시나리오 복사 → 새 시나리오로 바로 저장 · 편집 (원본 그대로)
+      api.openScenario(SV.byId.get(idA), { silent: true });
+      const revA = srv.sc.get(idA).rev, dataA = srv.sc.get(idA).data, nList = SV.list.length;
+      api.openScenarioList(); await sleep(30);
+      const cpBtn = document.querySelector(`#scnList .scn-row[data-sid="${idA}"] [data-sa="copy"]`);
+      ok('S18 시나리오 목록에 [복사] 버튼', !!cpBtn && cpBtn.textContent.includes('복사'));
+      cpBtn.click();
+      ok('S18b 복사 창: 이름 기본값 "(사본)"', await waitFor(() => document.getElementById('cpName')) && document.getElementById('cpName').value === '1안 (사본)');
+      document.getElementById('cpName').value = '1안 복사 테스트'; document.getElementById('cpAuthor').value = '하나';
+      document.querySelector('#modalRoot [data-act="1"]').click();
+      ok('S18c 복사 → 서버에 새 시나리오 생성 · 열림 · 편집 모드', await waitFor(() => SV.list.length === nList + 1 && src() && src().name === '1안 복사 테스트') && src().id !== idA && src().author === '하나' && st.mode === 'edit' && !api.isDirty());
+      const idCp = src().id;
+      ok('S18d 복사본 내용 = 원본, 원본은 그대로', sDoc(idCp).items.length === JSON.parse(dataA).items.length && srv.sc.get(idA).rev === revA && srv.sc.get(idA).data === dataA);
+      api.mutate(() => { seatAt(686, 220).name = '복사본편집'; });
+      ok('S19 복사본 편집 후 [저장하기] → 복사본에 덮어쓰기, 원본 그대로', await saveVia('1안 복사 테스트', '하나', 'over') === true && src().id === idCp && sDoc(idCp).items.some((i) => i.name === '복사본편집') && srv.sc.get(idA).data === dataA);
+      // 편집 중인 시나리오를 복사 → 편집 내용까지 복사, 원본은 마지막 저장 상태
+      api.openScenario(SV.byId.get(idA), { silent: true });
+      api.mutate(() => { items().find((i) => S.def(i.type).seat && !i.name).name = '저장안함'; });
+      const pCp = api.copyScenario(api.findSc('server', idA), 'server');
+      ok('S20 편집 중 복사 → 안내 문구', await waitFor(() => document.getElementById('cpName')) && document.querySelector('#modalRoot .note-box') && document.querySelector('#modalRoot .note-box').textContent.includes('편집 중'));
+      document.getElementById('cpName').value = '1안 편집본';
+      document.querySelector('#modalRoot [data-act="1"]').click();
+      ok('S20b 편집 내용은 복사본에만, 원본은 그대로', await pCp === true && src().name === '1안 편집본' && sDoc(src().id).items.some((i) => i.name === '저장안함') && srv.sc.get(idA).data === dataA);
     } catch (e) { ok('서버 검증 예외 없음', false, e && (e.stack || e.message)); }
     showResult('SERVER');
     return;
@@ -616,6 +639,18 @@
     ok('C8 기본 도형 만들기는 그대로 (이름 표시)', !!st.placing && st.placing.parts[0].type === 'custom' && st.placing.parts[0].name === '안마의자' && (store.customs || []).length === nCust + 2);
     key('Escape');
     store.customs = (store.customs || []).slice(0, nCust); api.persist();
+
+    // 11-g. 실제 마우스로 누를 수 있는지 (CSS pointer-events · 덮개 검사)
+    const hitOk = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); if (!r.width) return false; const h = document.elementFromPoint(r.left + Math.min(r.width / 2, 24), r.top + r.height / 2); return !!h && (el === h || el.contains(h) || (h.tagName === 'LABEL' && h.contains(el))); };
+    api.setMode('edit');
+    ok('P1 시나리오 버튼을 마우스로 누를 수 있음', getComputedStyle(document.getElementById('scnBtn')).pointerEvents !== 'none' && hitOk(document.getElementById('scnBtn')));
+    st.sel = new Set([items().find((i) => S.def(i.type).seat).id]); st.selRoom = null; api.renderAll(); await raf();
+    const numIn = Array.from(document.querySelectorAll('#inspector .numf.lbl input'));
+    ok('P2 인스펙터 W · H · X · Y 칸 클릭 가능', numIn.length >= 4 && numIn.every((i) => getComputedStyle(i).pointerEvents !== 'none' && hitOk(i)), numIn.length + ' ' + numIn.map((i) => { const r = i.getBoundingClientRect(); const h = document.elementFromPoint(r.left + Math.min(r.width / 2, 24), r.top + r.height / 2); return i.dataset.f + ':' + getComputedStyle(i).pointerEvents + ':' + Math.round(r.top) + ':' + (h ? (h.id || h.className || h.tagName) : 'null'); }).join(','));
+    const blocked = Array.from(document.querySelectorAll('.topbar button, .panel button, .float button, .panel input, .panel select')).filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && !el.closest('[hidden]') && !el.disabled && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).pointerEvents === 'none' && !el.closest('.switch'); });
+    ok('P3 화면의 버튼 · 입력칸 중 클릭이 막힌 것 없음', blocked.length === 0, blocked.map((el) => el.id || el.className || el.dataset.f).join(','));
+    api.setMode('view');
+    ok('P4 보기 모드에서도 시나리오 버튼 클릭 가능', hitOk(document.getElementById('scnBtn')));
 
     // 12. 보기 모드: 클릭 선택
     api.setMode('view');

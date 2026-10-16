@@ -682,7 +682,7 @@
     return `<div class="scn-row${isCur ? ' cur' : ''}" data-sid="${esc(s.id)}" data-kind="${kind}">
       <div class="scn-main"><div class="scn-title">${star}<b>${esc(s.name)}</b>${isCur ? `<span class="chip">${isDirty() ? '편집 중' : '보는 중'}</span>` : ''}</div>
       <div class="scn-sub">${esc(s.author || '작성자 없음')} · ${when} · 책상 ${c.desks} · 배정 ${c.named}${kind === 'server' ? ` · v${s.rev}` : ''}</div></div>
-      ${kind === 'deleted' ? '<button class="btn soft sm" data-sa="restore">복원</button>' : `<button class="btn soft sm" data-sa="open">${isCur ? '다시 열기' : '열기'}</button><button class="btn icon flat" data-sa="more" title="더보기">${svgIcon('more')}</button>`}
+      ${kind === 'deleted' ? '<button class="btn soft sm" data-sa="restore">복원</button>' : `<button class="btn soft sm" data-sa="open">${isCur ? '다시 열기' : '열기'}</button><button class="btn soft sm" data-sa="copy" title="이 시나리오를 복사해서 새 시나리오로 편집 (원본은 그대로)">${ic('copy')}복사</button><button class="btn icon flat" data-sa="more" title="더보기">${svgIcon('more')}</button>`}
     </div>`;
   }
   function renderScenarioList() {
@@ -725,6 +725,7 @@
     const act = btn ? btn.dataset.sa : 'open';
     if (act === 'restore') { await serverUpdate(id, { deleted: false, note: '삭제 취소 전' }, `'${sc.name}' 시나리오를 복원했어요`); return; }
     if (act === 'more') { openScenarioMenu(btn, kind, sc); return; }
+    if (act === 'copy') { closeModal(); copyScenario(sc, kind); return; }
     closeModal();
     if (!(await confirmDiscard('다른 시나리오를 열면'))) return;
     openScenario(sc);
@@ -736,10 +737,11 @@
       if (sc.id !== server.featuredId) entries.push({ label: '대표 시나리오로 지정', icon: 'star', fn: async () => { try { await server.backend.setFeatured(sc.id); toast(`'${sc.name}'을(를) 대표 시나리오로 지정했어요`, { icon: 'star' }); } catch (e) { toast('지정하지 못했어요: ' + e.message, { err: true, icon: 'alert' }); } } });
       entries.push({ label: '이름 · 작성자 변경', icon: 'edit', fn: () => renameScenario(sc) });
       entries.push({ label: '버전 기록', icon: 'rotccw', fn: () => openVersions(sc) });
-      entries.push({ label: '사본으로 열기', icon: 'copy', fn: async () => { closeModal(); if (await confirmDiscard('사본을 열면')) { let d; try { d = normalizeDoc(JSON.parse(sc.data)); } catch (er) { return; } startNew(d, sc.name + ' (사본)'); setMode('edit'); toast('사본을 열었어요 · [저장하기]로 새 시나리오로 저장하세요', { icon: 'copy' }); } } });
+      entries.push({ label: '복사해서 편집', icon: 'copy', fn: () => { closeModal(); copyScenario(sc, kind); } });
       entries.push('-');
       entries.push({ label: '삭제', icon: 'trash', danger: true, fn: async () => { if (await confirmBox('시나리오 삭제', `'${esc(sc.name)}' 시나리오를 목록에서 삭제할까요?<br>목록 아래 '삭제된 시나리오'에서 다시 복원할 수 있어요.`, '삭제', true)) serverUpdate(sc.id, { deleted: true, note: '삭제 전' }, `'${sc.name}'을(를) 삭제했어요`); } });
     } else {
+      entries.push({ label: '복사해서 편집', icon: 'copy', fn: () => { closeModal(); copyScenario(sc, kind); } });
       entries.push({ label: '이름 변경', icon: 'edit', fn: async () => { const n = await askText('이름 변경', sc.name); if (n) { store.scenarios[sc.id].name = n; const src = workSrc(); if (src && src.id === sc.id) src.name = n; persist(); renderScnButton(); if (listIsOpen()) renderScenarioList(); } } });
       entries.push({ label: '이 브라우저에서 삭제', icon: 'trash', danger: true, fn: async () => { if (await confirmBox('시나리오 삭제', `'${esc(sc.name)}'을(를) 이 브라우저에서 삭제할까요? 되돌릴 수 없어요.`, '삭제', true)) { delete store.scenarios[sc.id]; const src = workSrc(); if (src && src.id === sc.id) store.work.src = null; persist(); renderScnButton(); } } });
     }
@@ -761,6 +763,46 @@
         return undefined;
       } }],
       onOpen: (root) => { $('#rnName', root).focus(); },
+    });
+  }
+  /** 시나리오 복사 → 바로 새 시나리오로 저장하고 편집 (원본은 그대로) */
+  async function copyScenario(sc, kind) {
+    const cur = workSrc();
+    const isCur = !!cur && cur.id === sc.id && (cur.kind || 'server') === (kind || 'server') && !state.shared;
+    const withEdits = isCur && isDirty();
+    if (!isCur && !(await confirmDiscard('복사본을 열면'))) return false;
+    let doc;
+    try { doc = withEdits ? cloneDoc(state.doc) : normalizeDoc(sc.doc && typeof sc.doc === 'object' ? sc.doc : JSON.parse(sc.data)); } catch (e) { toast('시나리오를 읽지 못했어요', { err: true, icon: 'alert' }); return false; }
+    return new Promise((resolve) => {
+      let done = false, acting = false;
+      const fin = (v) => { if (!done) { done = true; resolve(v); } };
+      const submit = async () => {
+        if (acting) return;
+        const name = ($('#cpName').value || '').trim().slice(0, 40), author = ($('#cpAuthor').value || '').trim().slice(0, 30);
+        if (!name) { $('#cpName').focus(); toast('새 시나리오 이름을 입력해 주세요', { icon: 'info' }); return; }
+        acting = true;
+        closeModal();
+        store.work = { doc, src: null, savedStr: canon(doc), suggest: name };
+        state.doc = doc;
+        resetWorkState();
+        setMode('edit');
+        const ok = await doSave({ name, author, asNew: true });
+        if (ok) toast(`'${name}' 복사본을 만들었어요 · 여기서 편집하고 [저장하기]를 누르면 복사본에 저장돼요 (원본 '${sc.name}'은 그대로)`, { icon: 'copy', ms: 4500 });
+        fin(ok);
+      };
+      modal({
+        title: '시나리오 복사',
+        body: `<p>'${esc(sc.name)}'을(를) 복사해서 새 시나리오를 만들고 바로 편집해요. <b>원본은 그대로</b> 남아요.</p>
+          ${withEdits ? '<div class="note-box warn" style="margin-bottom:10px">지금 편집 중인 (저장 안 된) 내용까지 복사본에 들어가요. 원본은 마지막으로 저장된 상태로 남아요.</div>' : ''}
+          <label class="fld"><span>새 시나리오 이름</span><input class="inp" id="cpName" maxlength="40" value="${esc((sc.name + ' (사본)').slice(0, 40))}"></label>
+          <label class="fld"><span>작성자</span><input class="inp" id="cpAuthor" maxlength="30" value="${esc(store.authorName || '')}" placeholder="예: 댄"></label>`,
+        actions: [{ label: '취소', kind: 'soft' }, { label: '복사해서 편집', kind: 'primary', icon: 'copy', fn: () => { submit(); return false; } }],
+        onOpen: (root) => {
+          const n = $('#cpName', root); n.focus(); n.select();
+          root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('input.inp')) { e.preventDefault(); submit(); } });
+        },
+        onClose: () => { if (!acting) fin(false); },
+      });
     });
   }
   async function openVersions(sc) {
@@ -3236,7 +3278,7 @@
     const W = Math.round(box.w * ppc), H = Math.round(box.h * ppc);
     const t = state.totals;
     const title = `<g transform="translate(${box.x + 24} ${box.y + 30})"><text x="0" y="0" style="font-size:30px;font-weight:800;fill:#17191D">INERTIA · 17F</text><text x="0" y="34" style="font-size:17px;font-weight:600;fill:#5B616B">${esc(currentName())} · 책상 ${t.desks} · 배정 ${t.named} · ${new Date().toLocaleDateString('ko-KR')}</text></g>`;
-    const src = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${box.x} ${box.y} ${box.w} ${box.h}"><defs>${defs}</defs><rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" fill="#EAE7E0"/>${layers}${title}</svg>`;
+    const src = `<svg xmlns="http://www.w3.org/2000/svg" id="plan" width="${W}" height="${H}" viewBox="${box.x} ${box.y} ${box.w} ${box.h}"><defs>${defs}</defs><rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" fill="#EAE7E0"/>${layers}${title}</svg>`;
     const img = new Image();
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(src);
     try { await img.decode(); } catch (e) { toast('이미지 생성 실패', { err: true, icon: 'alert' }); return; }
@@ -3251,9 +3293,11 @@
   /* ---------------------------------------------------------- menus · banner */
   function openMoreMenu() {
     const b = $('#moreBtn').getBoundingClientRect();
+    const narrow = window.innerWidth <= 640 && state.mode === 'edit'; // 폰 화면: 상단의 실행 취소 · 다시 실행 버튼이 숨겨지므로 메뉴에 둠
     openMenu(b.right - 250, b.bottom + 6, [
+      ...(narrow ? [{ label: '실행 취소', icon: 'undo', disabled: !hist.undo.length, fn: undo }, { label: '다시 실행', icon: 'redo', disabled: !hist.redo.length, fn: redo }, '-'] : []),
       { label: '시나리오 목록', icon: 'folder', fn: openScenarioList },
-      { label: '다른 이름으로 저장', icon: 'save', kbd: 'Ctrl+Shift+S', fn: () => openSaveDialog({ asNew: true }) },
+      { label: '복사본으로 저장 (다른 이름으로)', icon: 'copy', kbd: 'Ctrl+Shift+S', fn: () => openSaveDialog({ asNew: true }) },
       '-',
       { label: 'PNG 이미지로 저장', icon: 'image', fn: exportPNG },
       { label: '배치 파일 내보내기 (.json)', icon: 'download', fn: () => exportJSON(false) },
@@ -3506,7 +3550,7 @@
         select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc, normalizeDoc,
         setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab,
         openCustomModal, openShare, openHelp, openGallery, persist, baseDoc, canon, isDirty,
-        openSaveDialog, doSave, openScenarioList, openScenario, startNew, openVersions, deleteSel, duplicateSel,
+        openSaveDialog, doSave, copyScenario, findSc, openScenarioList, openScenario, startNew, openVersions, deleteSel, duplicateSel,
         assignMember, editRoster, importRosterText, parseRosterText, openRosterPaste, openTeamMgr, openMemberDialog, fillSeatsWithTeam, nameOf, teamIdOf, memberById, seatOfMember,
         setView: (k, x, y) => { const r = stageSize(); Object.assign(state.view, { k, tx: r.w / 2 - x * k, ty: r.h / 2 - y * k }); applyView(); },
       },
