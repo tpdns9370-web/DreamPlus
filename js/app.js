@@ -77,6 +77,8 @@
     seat: '<rect x="4" y="4" width="16" height="7" rx="1.5"/><circle cx="12" cy="17" r="3.5"/>',
     save: '<path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M7 3v5h8V3"/><rect x="7" y="13" width="10" height="6" rx="1"/>',
     folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    cube: '<path d="M12 2.5l8.5 4.8v9.4L12 21.5l-8.5-4.8V7.3z"/><path d="M3.5 7.3L12 12l8.5-4.7M12 12v9.5"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
     star: '<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z" fill="currentColor"/>',
   };
   const svgIcon = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
@@ -839,6 +841,39 @@
       resetWorkState();
       toast(`v${v.rev} 내용을 열었어요 · [저장하기] → 덮어쓰기 하면 이 버전으로 복원돼요`, { icon: 'rotccw', ms: 4500 });
     };
+  }
+
+  /* ============================================================ 3D 보기 */
+  /** opts: { sit: 책상 id } | { room: 공간 id } | {} (전체 둘러보기) */
+  async function open3D(opts) {
+    if (!window.View3D) return false;
+    if (!opts) { // 선택 상태에 따라: 책상 → 앉아보기, 공간 → 입구에서 보기
+      const seat = selItems().find(isSeat) || (selItems().length ? seatOfChair(selItems()[0]) : null);
+      opts = seat ? { sit: seat.id } : state.selRoom ? { room: state.selRoom } : {};
+    }
+    cancelPlacing(true); hideMenu(); closeModal(); hideTooltip();
+    const items = state.doc.items.map((it) => {
+      const o = Object.assign({}, it);
+      if (isSeat(it)) {
+        o.label = nameOf(it) || ''; o.labelColor = teamColor(teamIdOf(it)) || '#4F46E5'; o.anchor = seatAnchor(it);
+        o.accent = teamColor(teamIdOf(it)) || null;
+        const r = itemRoom(it); if (r) o.roomName = roomName(r);
+      } else if (it.name && !isChair(it)) o.label = it.name;
+      return o;
+    });
+    const rooms = ROOMS.map((r) => ({ id: r.id, poly: r.poly, edges: r.edges, name: roomName(r), floor: (P.PURPOSES[roomPurpose(r)] || P.PURPOSES.free).floor }));
+    toast('3D 준비 중…', { icon: 'cube', ms: 1200 });
+    try {
+      await window.View3D.open({ items, rooms, P, S, ic, title: currentName(), showNet: state.prefs.net !== false }, opts);
+      return true;
+    } catch (e) {
+      toast((e && e.message) || '3D 를 열지 못했어요', { err: true, icon: 'alert', ms: 4000 });
+      return false;
+    }
+  }
+  function seatOfChair(it) {
+    if (!it || !it.group) return null;
+    return state.doc.items.find((x) => x.group === it.group && isSeat(x)) || null;
   }
 
   /* ============================================================ view */
@@ -2119,7 +2154,7 @@
     let s = `<div class="ins-head"><div class="ins-thumb">${S.thumb(Object.assign({}, d, { w: it.w, h: it.h, color: it.color, shape: it.shape, type: it.type, set: null }), 56, 46)}</div><div class="ins-title"><div class="eyebrow">${grp ? ic('group') + '그룹 · ' + items.length + '개' : esc(d.cat === 'custom' ? '사용자 아이템' : (S.CATALOG.find((c) => c.cat === d.cat) || { label: '' }).label)}</div><h3>${esc(nameOf(it) || typeName(it))}</h3><p>${esc(typeName(it))} · ${Math.round(it.w)}×${Math.round(it.h)}cm${r ? ' · ' + esc(roomName(r)) : ''}</p></div></div>`;
     if (!edit) {
       s += `<div class="sec"><dl class="kv"><dt>이름</dt><dd>${esc(nameOf(it) || '—')}</dd><dt>팀</dt><dd>${tm ? `<span class="chip"><span class="d" style="background:${tm.color}"></span>${esc(tm.name)}</span>` : '—'}</dd><dt>공간</dt><dd>${r ? esc(roomName(r)) + ' · ' + r.no : '—'}</dd><dt>크기</dt><dd>${Math.round(it.w)} × ${Math.round(it.h)} cm</dd></dl>${it.note ? `<div class="note-box" style="margin-top:10px">${esc(it.note)}</div>` : ''}</div>`;
-      s += `<div class="sec"><button class="btn soft wide" data-cmd="fly">${ic('target')}이 위치로 확대</button></div>`;
+      s += `<div class="sec">${isSeat(it) || seatOfChair(it) ? `<button class="btn primary wide" data-cmd="sit3d" style="margin-bottom:8px">${ic('cube')}이 자리에 앉아보기 (3D)</button>` : ''}<button class="btn soft wide" data-cmd="fly">${ic('target')}이 위치로 확대</button></div>`;
       return s;
     }
     const roomBox = `<label class="fld"><span>공간</span><input class="inp" value="${r ? esc(roomName(r)) : '전용공간 밖'}" disabled></label>`;
@@ -2152,6 +2187,7 @@
         s += `<div class="sec"><h4>색상</h4><div class="swatches"><button class="swatch none${!it.color ? ' on' : ''}" data-color="" title="기본"></button>${ITEM_COLORS.map((c) => `<button class="swatch${it.color === c ? ' on' : ''}" data-color="${c}" style="background:${c}" title="${c}"></button>`).join('')}<label class="swatch pick" title="직접 선택"><input type="color" data-f="color" value="${it.color || '#A5B4FC'}"></label></div></div>`;
       }
     }
+    if (isSeat(it) || seatOfChair(it)) s += `<div class="sec"><button class="btn soft wide" data-cmd="sit3d">${ic('cube')}이 자리에 앉아보기 (3D)</button></div>`;
     s += `<div class="sec"><div class="actions">` +
       `<button class="act" data-cmd="dup">${ic('copy')}복제</button>` +
       `<button class="act${it.locked ? ' on' : ''}" data-cmd="lock">${ic(it.locked ? 'lock' : 'unlock')}${it.locked ? '잠김' : '잠금'}</button>` +
@@ -2233,6 +2269,7 @@
       if (ov.note) s += `<div class="note-box">${esc(ov.note)}</div>`;
       s += `<div class="sec"><button class="btn soft wide" data-cmd="roomFly">${ic('target')}이 공간으로 확대</button></div>`;
     }
+    s += `<div class="sec"><button class="btn soft wide" data-cmd="room3d">${ic('cube')}3D로 보기 (입구에서)</button></div>`;
     return s;
   }
 
@@ -2258,6 +2295,8 @@
         rot90: () => rotateSel(90), 'rot-90': () => rotateSel(-90), rot180: () => rotateSel(180),
         fly: () => { const it = primaryOf(items); if (it) flyToItem(it); },
         roomFly: () => flyToRoom(ROOM_BY_ID[state.selRoom]),
+        room3d: () => open3D({ room: state.selRoom }),
+        sit3d: () => { const it = primaryOf(items); const seat = it && (isSeat(it) ? it : items.find(isSeat) || seatOfChair(it)); if (seat) open3D({ sit: seat.id }); },
         roomClear: () => clearRoom(state.selRoom),
         roomSelectAll: () => { const id = state.selRoom; state.sel = new Set(state.doc.items.filter((i) => !i.locked && !netHidden(i) && itemRoom(i) && itemRoom(i).id === id).map((i) => i.id)); state.selRoom = null; onSelectionChange(); },
         bulkNames, bulkClear,
@@ -3336,6 +3375,7 @@
       { label: '배치 파일 내보내기 (.json)', icon: 'download', fn: () => exportJSON(false) },
       { label: '배치 파일 가져오기', icon: 'upload', fn: importJSON },
       '-',
+      { label: '3D로 보기', icon: 'cube', fn: () => open3D() },
       { label: '임대차계약서 평면도 원본', icon: 'map', fn: openOrigPlan },
       { label: '현장 사진', icon: 'image', fn: () => openGallery() },
       { label: '단축키 · 사용법', icon: 'help', kbd: '?', fn: openHelp },
@@ -3435,6 +3475,7 @@
   const isTyping = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
   function onKeyDown(e) {
     if (!$('#modalRoot').hidden) return;
+    if (window.View3D && window.View3D.isOpen()) return;
     if (isTyping(e.target)) { if (e.key === 'Escape') e.target.blur(); return; }
     const mod = e.ctrlKey || e.metaKey, k = e.key;
     if (k === ' ') { if (!spaceDown) { spaceDown = true; stage.classList.add('tool-pan'); } e.preventDefault(); return; }
@@ -3515,6 +3556,7 @@
     $('#shareBtn').onclick = openShare;
     $('#moreBtn').onclick = openMoreMenu;
     $('#scnBtn').onclick = openScenarioList;
+    $('#view3dBtn').onclick = () => open3D();
     $('#customBtn').onclick = () => openCustomModal();
     $('#origPlanBtn').onclick = openOrigPlan;
     $('#galleryBtn').onclick = () => openGallery();
@@ -3583,7 +3625,7 @@
         select: selectItem, selectRoom, rotateSel, undo, redo, applyPreset, mutate, renderAll, encodeShare, decodeShare, packDoc, unpackDoc, normalizeDoc,
         setMode, setTool, startPlacing, placeNow, updateGhost, toWorld, fit, computeWarnings, aabb, itemRoom, exportPNG, zoomAt, setTab,
         openCustomModal, openShare, openHelp, openGallery, persist, baseDoc, canon, isDirty,
-        openSaveDialog, doSave, copyScenario, findSc, netSummary, openScenarioList, openScenario, startNew, openVersions, deleteSel, duplicateSel,
+        openSaveDialog, doSave, copyScenario, findSc, netSummary, open3D, openScenarioList, openScenario, startNew, openVersions, deleteSel, duplicateSel,
         assignMember, editRoster, importRosterText, parseRosterText, openRosterPaste, openTeamMgr, openMemberDialog, fillSeatsWithTeam, nameOf, teamIdOf, memberById, seatOfMember,
         setView: (k, x, y) => { const r = stageSize(); Object.assign(state.view, { k, tx: r.w / 2 - x * k, ty: r.h / 2 - y * k }); applyView(); },
       },

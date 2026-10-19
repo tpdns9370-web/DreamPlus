@@ -700,6 +700,80 @@
     ok('N13 스위치 허브는 책상 위 소품처럼 함께 이동', st.idx.get(nSw.id).y === nSwPos[1] + 10 && st.idx.get(nFb.id).y === nFbPos[1]);
     key('z', { ctrlKey: true });
 
+    // 11-i. 3D 보기
+    api.setMode('edit');
+    const v3Seat = items().find((i) => S.def(i.type).seat && api.itemRoom(i) && api.itemRoom(i).id === 'r16' && !i.member);
+    api.mutate(() => { v3Seat.name = '삼디'; });
+    api.startPlacing({ def: S.TYPES.monitor }, 'm'); api.updateGhost(v3Seat.x, v3Seat.y, true); api.placeNow(false);
+    const mon3 = st.idx.get(Array.from(st.sel)[0]);
+    const v3Opened = await api.open3D({});
+    if (!v3Opened && !document.getElementById('view3d')) {
+      ok('V0 WebGL 없는 환경 — 3D 점검 건너뜀', true);
+    } else {
+      await waitFor(() => window.View3D.current() && window.View3D.current().api, 8000);
+      let v3 = window.View3D.current();
+      const s0 = v3.api.state();
+      const expectN = items().filter((i) => i.type !== 'door').length;
+      ok('V1 3D 열기: 벽 · 가구 · 이름표 · 둘러보기', !!document.querySelector('#view3d canvas') && s0.walls > 100 && s0.items === expectN && s0.labels >= 1 && s0.mode === 'orbit', JSON.stringify(s0));
+      ok('V1b 둘러보기는 벽을 낮춤', s0.wallsY < 0.5);
+      ok('V2 책상 위 모니터는 책상 높이(73cm)에', !!mon3 && Math.abs(v3.api.groupOf(mon3.id).position.y - 73) < 0.6, mon3 && v3.api.groupOf(mon3.id).position.y);
+      const boxes3 = items().filter((i) => /^box/.test(i.type));
+      ok('V2b 랙 위 박스는 랙 높이에', boxes3.some((b) => Math.abs(v3.api.groupOf(b.id).position.y - 180) < 1));
+      v3.api.sit(v3Seat.id);
+      const s1 = v3.api.state();
+      const fx = -Math.sin(s1.yaw), fz = -Math.cos(s1.yaw), tx = v3Seat.x - s1.x, tz = v3Seat.y - s1.z, tn = Math.hypot(tx, tz);
+      ok('V3 자리에 앉기: 앉은 눈높이 · 책상을 바라봄', s1.mode === 'walk' && s1.y === 120 && s1.sitId === v3Seat.id && (fx * tx + fz * tz) / tn > 0.95 && tn < 110, JSON.stringify(s1));
+      ok('V3b 내 자리 이름표는 숨김 · 위치 안내', v3.labelOf.get(v3Seat.id).visible === false && document.querySelector('.v3d-where').textContent.includes('삼디'));
+      ok('V3c 사람 시점에서는 벽 원래 높이', s1.wallsY === 1);
+      const f0 = v3.api.state().frames;
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true }));
+      await sleep(300); await waitFor(() => v3.api.state().frames >= f0 + 5, 6000);
+      window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', bubbles: true }));
+      const s2 = v3.api.state();
+      const mv = (s2.x - s1.x) * fx + (s2.z - s1.z) * fz;
+      ok('V4 W 키로 앞으로 걷기', mv > 20 && !s2.sitId, `moved ${Math.round(mv)}`);
+      const nBefore = items().length;
+      st.sel = new Set([v3Seat.id]);
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+      ok('V5 3D 가 열려 있는 동안 도면 단축키(Delete) 무시', items().length === nBefore && st.idx.has(v3Seat.id));
+      document.querySelector('#view3d [data-v3mode="orbit"]').click();
+      const s3 = v3.api.state();
+      ok('V6 둘러보기로 전환', s3.mode === 'orbit' && s3.y > 300 && s3.wallsY < 0.5);
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      ok('V7 Esc 로 닫기', !document.getElementById('view3d') && !window.View3D.isOpen() && !document.body.classList.contains('v3d-open'));
+      // 인스펙터 버튼
+      st.sel = new Set([v3Seat.id]); st.selRoom = null; api.renderAll(); await raf();
+      const sitBtn = document.querySelector('#inspector [data-cmd="sit3d"]');
+      ok('V8 책상 정보에 "이 자리에 앉아보기"', !!sitBtn);
+      if (sitBtn) sitBtn.click();
+      await waitFor(() => window.View3D.current() && window.View3D.current().api, 8000);
+      v3 = window.View3D.current();
+      ok('V8b 버튼 → 그 자리에 앉은 시점', !!v3 && v3.api.state().sitId === v3Seat.id);
+      window.View3D.close();
+      api.selectRoom('r6a'); await raf();
+      const roomBtn = document.querySelector('#inspector [data-cmd="room3d"]');
+      if (roomBtn) roomBtn.click();
+      await waitFor(() => window.View3D.current() && window.View3D.current().api, 8000);
+      v3 = window.View3D.current();
+      const s4 = v3 && v3.api.state();
+      ok('V9 공간 → 입구에서 선 눈높이로', !!s4 && s4.mode === 'walk' && s4.eye === 160 && s4.x > 649 && s4.x < 1029 && s4.z > 785 && s4.z < 1241, JSON.stringify(s4));
+      window.View3D.close();
+      // 위치 표시 숨기면 3D 에서도 빠짐
+      const mk = items().find((i) => S.def(i.type).mark);
+      st.prefs.net = false;
+      await api.open3D({});
+      await waitFor(() => window.View3D.current() && window.View3D.current().api, 8000);
+      v3 = window.View3D.current();
+      ok('V10 랜 · 콘센트 표시를 끄면 3D 에서도 숨김', !!mk && !!v3 && !v3.api.groupOf(mk.id));
+      window.View3D.close();
+      st.prefs.net = true;
+      document.getElementById('view3dBtn').click();
+      await waitFor(() => window.View3D.current() && window.View3D.current().api, 8000);
+      ok('V11 상단 [3D] 버튼', window.View3D.isOpen());
+      window.View3D.close();
+    }
+    api.mutate(() => { delete v3Seat.name; });
+
     // 12. 보기 모드: 클릭 선택
     api.setMode('view');
     api.fit(false); await raf();
